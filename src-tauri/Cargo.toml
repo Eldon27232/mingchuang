@@ -13,6 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+embed-manifest = "1"
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -23,6 +24,13 @@ thiserror = "2"
 windows-registry = "0.6"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 base64 = "0.22"
+windows-service = "0.7"
+sysinfo = { version = "0.32", default-features = false, features = ["system"] }
+windows = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
+]}
 
 [profile.release]
 opt-level = "z"

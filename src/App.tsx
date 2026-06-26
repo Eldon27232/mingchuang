@@ -56,6 +56,12 @@ interface SnapshotManifest {
   action_target: string;
   action_reason: string;
   restored_at?: string;
+  restorable?: boolean;
+}
+
+interface ElevationStatus {
+  is_elevated: boolean;
+  message: string;
 }
 
 // ---- 主组件 ----
@@ -66,21 +72,24 @@ export default function App() {
   const [activePlans, setActivePlans] = useState<Record<string, ActionPlan[]>>(
     {}
   );
+  const [elev, setElev] = useState<ElevationStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [toasts, setToasts] = useState<{ id: number; kind: "ok" | "err"; msg: string }[]>([]);
 
   const refreshAll = async () => {
     try {
-      const [p, n, s] = await Promise.all([
+      const [e, p, n, s] = await Promise.all([
+        invoke<ElevationStatus>("check_elevation"),
         invoke<Profile[]>("list_profiles"),
         invoke<PcNamespaceItem[]>("scan_pc_namespace"),
         invoke<SnapshotManifest[]>("list_snapshots"),
       ]);
+      setElev(e);
       setProfiles(p);
       setNsItems(n);
       setSnapshots(s);
-    } catch (e) {
-      toast("err", `刷新失败: ${e}`);
+    } catch (err) {
+      toast("err", `刷新失败: ${err}`);
     }
   };
 
@@ -159,6 +168,13 @@ export default function App() {
           整治国产流氓软件的 Windows 11 治理工具 · 一次跑完即退出 · 不常驻后台
         </p>
       </header>
+
+      {elev && (
+        <div className={`banner ${elev.is_elevated ? "ok" : "warn"}`}>
+          <span className="badge-small">{elev.is_elevated ? "✓ 管理员" : "⚠ 未提权"}</span>
+          <span>{elev.message}</span>
+        </div>
+      )}
 
       <div className="toasts">
         {toasts.map((t) => (
@@ -287,10 +303,11 @@ export default function App() {
                   <td>
                     <button
                       className="btn-restore"
-                      disabled={!!s.restored_at || busy !== null}
+                      disabled={!!s.restored_at || s.restorable === false || busy !== null}
                       onClick={() => restore(s.id)}
+                      title={s.restorable === false ? "此动作不可逆 (如 process-kill)" : ""}
                     >
-                      {busy === `restore:${s.id}` ? "..." : "还原"}
+                      {s.restorable === false ? "不可逆" : (busy === `restore:${s.id}` ? "..." : "还原")}
                     </button>
                   </td>
                 </tr>

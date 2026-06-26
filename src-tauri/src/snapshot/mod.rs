@@ -1,15 +1,12 @@
-//! 操作快照与还原引擎 (P0 安全地基)
+//! 操作快照与还原引擎 (P0 安全地基, v2 支持多种 payload kind)
 //!
-//! 每个破坏性动作执行前自动创建快照, 写到 `%LOCALAPPDATA%\kuake-fuckyou\snapshots\<id>\`
 //! 目录结构:
-//!   snapshots/
-//!   ├── <snapshot-id>/
-//!   │   ├── manifest.json     元数据 + 动作描述 + 子文件清单
-//!   │   └── registry.json     注册表子树 (reg-delete / reg-set 用)
-//!
-//! id 用 RFC3339 时间戳 + 6 位随机后缀, 排序即时间序。
+//!   %LOCALAPPDATA%\kuake-fuckyou\snapshots\<id>\
+//!   ├── manifest.json     元数据
+//!   └── payload.<ext>     按动作类型: registry.json / service.json / task.xml / process.json
 
 pub mod reg;
+pub mod service;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -25,15 +22,20 @@ pub struct SnapshotManifest {
     pub action_kind: String,
     pub action_target: String,
     pub action_reason: String,
-    /// 是否已经被还原 (避免重复 restore)
+    /// payload 文件名(相对 snapshot 目录)
+    pub payload_file: Option<String>,
+    /// 是否可还原 (process-kill 等不可逆动作为 false)
+    #[serde(default = "default_true")]
+    pub restorable: bool,
+    /// 已被还原过的时间
     #[serde(default)]
     pub restored_at: Option<DateTime<Utc>>,
-    /// 子文件列表 (相对路径)
-    #[serde(default)]
-    pub artifacts: Vec<String>,
 }
 
-/// 快照根目录
+fn default_true() -> bool {
+    true
+}
+
 pub fn snapshots_root() -> PathBuf {
     let local = std::env::var("LOCALAPPDATA")
         .map(PathBuf::from)
@@ -41,9 +43,7 @@ pub fn snapshots_root() -> PathBuf {
     local.join("kuake-fuckyou").join("snapshots")
 }
 
-/// 生成快照 id (排序即时间序)
 pub fn new_snapshot_id() -> String {
-    // chrono 提供时间, 但禁用 Math.random — 这里用进程内单调计数器避免重名碰撞
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let now = Utc::now();
@@ -52,7 +52,6 @@ pub fn new_snapshot_id() -> String {
     format!("{stamp}-{n:04x}")
 }
 
-/// 创建一个快照目录
 pub fn create_snapshot_dir(id: &str) -> Result<PathBuf> {
     let dir = snapshots_root().join(id);
     std::fs::create_dir_all(&dir).with_context(|| format!("创建快照目录失败: {dir:?}"))?;

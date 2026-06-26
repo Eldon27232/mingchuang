@@ -21,6 +21,19 @@ header h1 { margin: 0 0 6px 0; font-size: 22px; letter-spacing: 0.5px; }
 header .ver { font-size: 13px; color: var(--muted); font-weight: normal; }
 .subtitle { color: var(--muted); margin: 0 0 24px 0; font-size: 13px; }
 
+/* elevation banner */
+.banner {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px; border-radius: 6px; margin-bottom: 16px;
+  font-size: 13px; line-height: 1.4;
+}
+.banner.ok { background: #0c2818; border: 1px solid var(--ok); color: #b6e6c8; }
+.banner.warn { background: #3a2814; border: 1px solid var(--warn); color: #ffd9a8; }
+.badge-small {
+  font-size: 11px; padding: 2px 8px; border-radius: 3px;
+  background: rgba(255,255,255,0.1); flex-shrink: 0;
+}
+
 /* toasts */
 .toasts { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 6px; z-index: 999; }
 .toast { padding: 10px 14px; border-radius: 6px; font-size: 13px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); animation: slideIn 0.2s; }
