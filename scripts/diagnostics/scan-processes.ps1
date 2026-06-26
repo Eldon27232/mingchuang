@@ -49,19 +49,46 @@ if ($ProfileDir -and (Test-Path $ProfileDir)) {
 # ============ 2. 系统进程白名单(高置信) ============
 # Microsoft 自家进程, 一律保留。无需签名校验, 名字+路径就够。
 $systemNames = @(
-  'System','Registry','smss.exe','csrss.exe','wininit.exe','winlogon.exe','services.exe','lsass.exe',
-  'svchost.exe','fontdrvhost.exe','dwm.exe','explorer.exe','sihost.exe','taskhostw.exe','ctfmon.exe',
-  'conhost.exe','RuntimeBroker.exe','ApplicationFrameHost.exe','ShellExperienceHost.exe',
-  'StartMenuExperienceHost.exe','SearchHost.exe','SearchApp.exe','SearchIndexer.exe','SearchProtocolHost.exe',
-  'SearchFilterHost.exe','dllhost.exe','LockApp.exe','UserOOBEBroker.exe','CompPkgSrv.exe','audiodg.exe',
-  'spoolsv.exe','TextInputHost.exe','Widgets.exe','WidgetService.exe','SystemSettings.exe','NisSrv.exe',
-  'MsMpEng.exe','SecurityHealthService.exe','SecurityHealthSystray.exe','SgrmBroker.exe',
-  'Memory Compression','smartscreen.exe','PhoneExperienceHost.exe','GameInputRedistService.exe',
-  'WUDFHost.exe','wlanext.exe','PerfHost.exe','SgrmLpac.exe'
+  # 内核/会话
+  'System','Registry','System Idle Process','Secure System','smss.exe','csrss.exe','wininit.exe','winlogon.exe',
+  'services.exe','lsass.exe','LsaIso.exe','NgcIso.exe','svchost.exe','fontdrvhost.exe','dwm.exe','dasHost.exe',
+  # 用户态外壳
+  'explorer.exe','sihost.exe','taskhostw.exe','ctfmon.exe','conhost.exe','RuntimeBroker.exe',
+  'ApplicationFrameHost.exe','ShellExperienceHost.exe','ShellHost.exe','StartMenuExperienceHost.exe',
+  'SearchHost.exe','SearchApp.exe','SearchIndexer.exe','SearchProtocolHost.exe','SearchFilterHost.exe',
+  'dllhost.exe','LockApp.exe','UserOOBEBroker.exe','CompPkgSrv.exe','CrossDeviceResume.exe','AppActions.exe',
+  'AggregatorHost.exe','TextInputHost.exe','TabTip.exe','TextInputServer.exe',
+  # 音视频
+  'audiodg.exe','spoolsv.exe',
+  # UI 组件
+  'Widgets.exe','WidgetService.exe','SystemSettings.exe',
+  # Defender / 安全
+  'NisSrv.exe','MsMpEng.exe','SecurityHealthService.exe','SecurityHealthSystray.exe','SgrmBroker.exe',
+  'SgrmLpac.exe','smartscreen.exe','PhoneExperienceHost.exe',
+  # GameInput / Xbox
+  'GameInputRedistService.exe','GameInputSvc.exe','xgamehelper.exe','tcui-app.exe','XboxPcAppFT.exe',
+  'gamingservices.exe','gamingservicesnet.exe','GamePanel.exe',
+  # 驱动框架
+  'WUDFHost.exe','wlanext.exe','PerfHost.exe','WmiPrvSE.exe','WmiApSrv.exe','dasHost.exe',
+  # Hyper-V
+  'vmcompute.exe','vmms.exe','vmwp.exe',
+  # Edge 系统服务(微软自家)
+  'elevation_service.exe','MicrosoftEdgeUpdate.exe',
+  # 计算/低功耗管理
+  'Memory Compression','backgroundTaskHost.exe','DataExchangeHost.exe',
+  # 截图/系统应用
+  'SnippingTool.exe','MoUsoCoreWorker.exe','usocoreworker.exe'
+)
+# 系统进程的额外正则(覆盖按版本带后缀的微软进程)
+$systemNamePatterns = @(
+  '^WmiPrvSE',           # WMI Provider
+  '_2726c00f$',          # Win11 用户级 svchost 实例后缀
+  '^Microsoft\.'         # UWP 类
 )
 function Test-SystemProcess {
   param($Name,$Path)
   if ($systemNames -contains $Name) { return $true }
+  foreach ($p in $systemNamePatterns) { if ($Name -match $p) { return $true } }
   if ($Path -and ($Path -match '^C:\\Windows\\' -and $Path -notmatch '\\Temp\\' -and $Path -notmatch '\\Tasks\\')) { return $true }
   return $false
 }
@@ -70,31 +97,45 @@ function Test-SystemProcess {
 # 这是产品里"激进清理"会保留的进程。规则跑稳后,这部分会做成"可视化勾选"。
 $userKnownGood = @(
   # 通讯
-  'QQ.exe','QQBrowser.exe','WeChat.exe','WeChatAppEx.exe','Wemeet.exe','wemeetapp.exe','dingtalk.exe','feishu.exe','lark.exe',
-  'TIM.exe','KOOK.exe','Discord.exe','Slack.exe','Telegram.exe','Element.exe',
+  'QQ.exe','QQEX.exe','QQBrowser.exe','WeChat.exe','WeChatAppEx.exe','Wemeet.exe','wemeetapp.exe','dingtalk.exe',
+  'feishu.exe','lark.exe','TIM.exe','KOOK.exe','Discord.exe','Slack.exe','Telegram.exe','Element.exe',
   # 浏览器
   'msedge.exe','msedgewebview2.exe','chrome.exe','firefox.exe','brave.exe','vivaldi.exe','LibreWolf.exe','iexplore.exe',
   # 编辑/开发
   'Code.exe','code.exe','devenv.exe','idea64.exe','pycharm64.exe','goland64.exe','clion64.exe','rider64.exe','webstorm64.exe',
   'sublime_text.exe','notepad++.exe','obsidian.exe','typora.exe','HBuilderX.exe','Cursor.exe',
-  'claude.exe','windsurf.exe',
+  'claude.exe','windsurf.exe','cowork-svc.exe','node.exe','bash.exe','git.exe',
   # 终端/工具
   'WindowsTerminal.exe','OpenConsole.exe','wsl.exe','wslhost.exe','wslservice.exe','powershell.exe','pwsh.exe','cmd.exe',
   'Everything.exe','ditto.exe','7zFM.exe','WinRAR.exe',
   # 媒体/办公
   'POTPLAYER.EXE','PotPlayerMini64.exe','vlc.exe','foobar2000.exe','musicbee.exe','Spotify.exe',
+  'cloudmusic.exe','cloudmusic_reporter.exe',
   'EXCEL.EXE','WINWORD.EXE','POWERPNT.EXE','OUTLOOK.EXE','ONENOTE.EXE','OfficeClickToRun.exe','ai.exe',
+  'MSOfficePLUSService.exe',
   # 游戏/平台
   'steam.exe','steamwebhelper.exe','steamservice.exe','EpicGamesLauncher.exe','UbisoftConnect.exe','RiotClientServices.exe',
-  'GameViewer.exe','client.exe','wegame.exe',
+  'GameViewer.exe','GameViewerService.exe','GameViewerServer.exe','GameViewerHealthd.exe','client.exe','wegame.exe',
+  # NetEase UU 加速器(配合 GameViewer)
+  'uu.exe','uu_ball.exe','uu_launcher.exe','uu_cloudsyn.exe',
   # 系统类工具(用户特意装的)
-  'TranslucentTB.exe','Nexus.exe','AutoHotkey.exe','AutoHotkey64.exe','Rainmeter.exe',
+  'TranslucentTB.exe','Nexus.exe','WsxService.exe','AutoHotkey.exe','AutoHotkey64.exe','Rainmeter.exe',
+  # 壁纸引擎
+  'wallpaper64.exe','wallpaperservice32.exe','wallpaper32.exe','wallpaper_engine.exe',
   # 火绒(用户已表态保留)
-  'HipsDaemon.exe','HipsMain.exe','HipsTray.exe','wsctrl.exe','sysdiag.exe',
+  'HipsDaemon.exe','HipsMain.exe','HipsTray.exe','wsctrl.exe','wsctrlsvc.exe','sysdiag.exe',
   # FlClash(用户的代理)
   'FlClash.exe','FlClashCore.exe','FlClashHelperService.exe',
+  # Radmin VPN
+  'RvControlSvc.exe','RAdmin.exe',
   # 工具
   'crashpad_handler.exe'
+)
+# 用户应用的正则(覆盖一些带版本号/变形的进程名)
+$userKnownPatterns = @(
+  '^WeType',                  # 微信输入法(腾讯), 默认归用户应用; 不要可移到画像
+  '^uu_',                     # NetEase UU 衍生进程
+  '^PopBlock'                 # 第三方弹窗拦截(用户主动装)
 )
 
 # ============ 4. 硬件厂商工具(给硬件用的, 一般保留) ============
@@ -102,23 +143,62 @@ $hardwareTools = @(
   # NVIDIA
   'nvcontainer.exe','NVDisplay.Container.exe','nvidia share.exe','nvsphelper64.exe','NVIDIA Web Helper.exe','RtkAudUService64.exe',
   # AMD
-  'AMDRSSrcExt.exe','cncmd.exe','RadeonSoftware.exe','atieclxx.exe','atiesrxx.exe','AUEPLauncher.exe',
+  'AMDRSSrcExt.exe','AMDRSServ.exe','cncmd.exe','amdow.exe','RadeonSoftware.exe','Radeonsoftware.exe',
+  'atieclxx.exe','atiesrxx.exe','AUEPLauncher.exe','AUEPDU.exe','amdfendrsr.exe','AmdPpkgSvc.exe',
   # Intel
   'igfxEM.exe','igfxHK.exe','igfxTray.exe','IntelCpHDCPSvc.exe',
-  # ASUS
-  'AsusCertService.exe','asComSvc.exe','AcPowerNotification.exe','ArmouryCrate.exe','AsusOptimization.exe','AsusSwitch.exe',
-  # 主板
-  'EasyTuneEngineService.exe','GBTECService.exe',
+  # ASUS / ROG
+  'AsusCertService.exe','asComSvc.exe','atkexComSvc.exe','AcPowerNotification.exe','ArmouryCrate.exe',
+  'AsusOptimization.exe','AsusSwitch.exe','GHelper.exe','GCC.exe',
+  # 主板 (Gigabyte / 技嘉)
+  'EasyTuneEngineService.exe','GBTECService.exe','GigabyteUpdateService.exe','GBT_DL_LIB.exe',
   # 外设
-  'CorsairService.exe','iCUE.exe','LogiOverlay.exe','LGHUB.exe','LGHUB Agent.exe','RGB Fusion.exe',
+  'CorsairService.exe','CorsairDeviceControlService.exe','iCUE.exe','parfait_crash_handler.exe',
+  'LogiOverlay.exe','LGHUB.exe','LGHUB Agent.exe','RGB Fusion.exe',
+  # Corsair NGenuity
+  'NGenuity2.exe','NGenuity2Helper.exe',
   # 显示器/机箱
-  'JONSBO PC Monitor.exe',
-  # VR
-  'ps_service.exe',
-  # 输入法(微软自带)
-  'ChsIME.exe','MicrosoftPinyin*.exe','PINYINUP.EXE',
-  # 其他
-  'WeType*.exe'  # 微信输入法(暂列待定,后续用户决定)
+  'JONSBO PC Monitor.exe','CPUMetricsServer.exe','SystemInfos.exe',
+  # 音频(DTS / Realtek)
+  'DtsHPXV2Apo4Service.exe','RtkBtManServ.exe','RtkAudUService.exe',
+  # VR (PICO 4 等)
+  'ps_service.exe','ps_service_launcher.exe','ps_server.exe',
+  # 微软自带输入法
+  'ChsIME.exe','PINYINUP.EXE',
+  # 其他: 未识别的潜在硬件相关
+  'RPMDaemon.exe'              # RGB/外设 daemon(推断)
+)
+# 硬件厂商进程名正则
+$hardwareNamePatterns = @(
+  '^amd',                     # amdow, amdfendrsr 等
+  '^Amd',                     # AmdPpkgSvc
+  '^AMD',                     # AMDRSServ
+  '^Rtk',                     # Realtek
+  '^Asus','^asus',
+  '^ROG',
+  '^GBT',                     # Gigabyte
+  '^EasyTune',
+  '^Corsair',
+  '^iCUE',
+  '^NGenuity',
+  '^JONSBO',
+  '^PICO','^pico','^ps_',
+  '^DTS','^Dts','^dts',
+  '^Intel','^igfx',
+  '^NVIDIA','^nvidia','^nv'
+)
+
+# ============ 4b. 硬件/系统服务路径模式(用于反向归类没有进程名特征的进程) ============
+# 进程本身没匹配到任何白名单, 但它跑的是一个明显硬件/系统厂商的服务, 也归对应类
+$hardwareServicePathPatterns = @(
+  '\\AMD\\','\\NVIDIA\\','\\Intel\\','\\Realtek\\','\\Asus\\','\\ASUSTeK',
+  '\\Gigabyte\\','\\Corsair\\','\\JONSBO\\','\\PICO\\','\\Logitech\\','\\Razer\\',
+  'Wallpaper Engine'
+)
+$userServicePathPatterns = @(
+  '\\Steam\\','\\OfficeClickToRun','\\OfficePLUS\\','\\Tencent\\','\\Microsoft\\Edge\\',
+  '\\Netease\\','\\Huorong\\','\\FlClash\\','\\Radmin','\\Wallpaper Engine\\',
+  '\\Claude\\','\\Cowork'
 )
 
 # ============ 5. 拉数据 ============
@@ -168,6 +248,14 @@ foreach ($p in $procs) {
   $profileId = $null
   if ($profileHits.ContainsKey($name.ToLower())) { $profileId = $profileHits[$name.ToLower()] }
 
+  # 服务关联的 PathName(用于按服务路径反向归类)
+  $svcPath = ''
+  if ($svcs.Count -gt 0) {
+    foreach ($s in $services) { if ([int]$s.ProcessId -eq $pid_) { $svcPath += ' ' + [string]$s.PathName } }
+  }
+
+  function _matchAny { param($s,$pats) foreach ($p in $pats) { if ($s -match $p) { return $true } } return $false }
+
   if ($profileId) {
     $cls = 'profile-known-rogue'
     [void]$tags.Add("PROFILE:$profileId")
@@ -175,14 +263,22 @@ foreach ($p in $procs) {
   elseif (Test-SystemProcess -Name $name -Path $exe) {
     $cls = 'system'
   }
-  elseif ($userKnownGood -contains $name) {
-    $cls = 'user-app-good'
-  }
-  elseif ($hardwareTools -contains $name) {
+  elseif ($hardwareTools -contains $name -or (_matchAny $name $hardwareNamePatterns)) {
     $cls = 'hardware-tool'
   }
+  elseif ($userKnownGood -contains $name -or (_matchAny $name $userKnownPatterns)) {
+    $cls = 'user-app-good'
+  }
+  elseif ($svcPath -and (_matchAny $svcPath $hardwareServicePathPatterns)) {
+    $cls = 'hardware-tool'
+    [void]$tags.Add('matched-by-service-path')
+  }
+  elseif ($svcPath -and (_matchAny $svcPath $userServicePathPatterns)) {
+    $cls = 'user-app-good'
+    [void]$tags.Add('matched-by-service-path')
+  }
   elseif ($svcs.Count -gt 0) {
-    # 由服务驱动的非系统进程, 可疑保活
+    # 由非系统/非已知服务驱动的进程: 真正的可疑保活
     $cls = 'service-keepalive-suspect'
   }
   elseif ($exe -and ($exe -match '\\ProgramData\\' -or $exe -match '\\AppData\\Roaming\\' -or $name -match 'Update|Updater|Helper|Daemon|Monitor|Maintenance|Background')) {
