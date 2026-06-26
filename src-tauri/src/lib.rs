@@ -1,6 +1,9 @@
+mod action;
 mod commands;
 mod inventory;
 mod profile;
+mod snapshot;
+mod whitelist;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -8,6 +11,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::list_profiles,
             commands::scan_pc_namespace,
+            commands::dry_run_profile,
+            commands::execute_profile_action,
+            commands::list_snapshots,
+            commands::restore_snapshot,
         ])
         .run(tauri::generate_context!())
         .expect("error while running kuake-fuckyou");
