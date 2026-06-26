@@ -1,0 +1,75 @@
+{
+  "id": "kugou",
+  "name": "酷狗音乐",
+  "vendor": "Guangzhou Kugou Technology Co., Ltd.(广州酷狗计算机科技)",
+  "category": "music",
+  "severity": "medium",
+  "tested_on": {
+    "windows": "Windows 11 Pro for Workstations 10.0.26200",
+    "date": "2026-06-27",
+    "verified_by": "kuake-fuckyou/scripts/diagnostics/scan-processes.ps1 (6 个进程在跑) + Get-AuthenticodeSignature"
+  },
+  "fingerprints": {
+    "code_sign_subjects": [
+      "Guangzhou Kugou Technology Co., Ltd."
+    ],
+    "install_paths": [
+      "%PROGRAMFILES%\\KuGou",
+      "%PROGRAMFILES(X86)%\\KuGou"
+    ],
+    "install_path_keywords": [
+      "\\KuGou\\",
+      "\\KGMusic\\"
+    ],
+    "process_names": [
+      "KuGou.exe",
+      "active_desktop_launcher_x64.exe",
+      "bridge_plugin_host.exe",
+      "bridge_plugin_host_arm64.exe"
+    ],
+    "registry_keys": [
+      "HKCU\\Software\\Kugou"
+    ],
+    "shortcut_targets": [
+      "KuGou.exe"
+    ]
+  },
+  "actions": [
+    {
+      "kind": "process-kill",
+      "target": "KuGou.exe",
+      "reason": "酷狗音乐主程序及其 6 个子进程一并杀掉",
+      "elevate": false,
+      "rollback": null
+    },
+    {
+      "kind": "process-kill",
+      "target": "active_desktop_launcher_x64.exe",
+      "reason": "酷狗『活动桌面』推广组件",
+      "elevate": false,
+      "rollback": null
+    },
+    {
+      "kind": "process-kill",
+      "target": "bridge_plugin_host.exe",
+      "reason": "酷狗插件 host 进程",
+      "elevate": false,
+      "rollback": null
+    },
+    {
+      "kind": "process-kill",
+      "target": "bridge_plugin_host_arm64.exe",
+      "reason": "酷狗插件 host (arm64) 进程",
+      "elevate": false,
+      "rollback": null
+    }
+  ],
+  "verify": [
+    {
+      "kind": "process-not-running",
+      "target": "KuGou.exe",
+      "description": "酷狗主进程已退出"
+    }
+  ],
+  "notes": "酷狗证书 SerialNumber=91440115783790925T (EV) 由广州酷狗计算机科技持有, 仅签自家程序, 命中即可识别全家桶。运行时本机有 6 个 KuGou.exe 进程, 主进程 PPID=41772 (explorer.exe), 5 个子进程 PPID=KuGou 主进程, 是典型多窗口架构。本机暂未发现酷狗服务/计划任务/伪文件夹, 卸载残留待后续遇到再补。`active_desktop_launcher` 是推广件, 单独列出便于精准杀。Severity=medium 因不像网盘那样塞此电脑, 但仍属用户主动安装但带广告/推广的国产典型。"
+}

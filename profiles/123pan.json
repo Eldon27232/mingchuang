@@ -1,7 +1,7 @@
 {
   "id": "123pan",
   "name": "123 云盘",
-  "vendor": "上海跬卓信息科技 / 123云盘",
+  "vendor": "西安一二三云计算有限公司",
   "category": "netdisk",
   "severity": "high",
   "tested_on": {
@@ -10,9 +10,19 @@
     "verified_by": "kuake-fuckyou/scripts/diagnostics/monitor-123-namespace.ps1"
   },
   "fingerprints": {
+    "code_sign_subjects": [
+      "西安一二三云计算有限公司"
+    ],
+    "clsids": [
+      "{D5BE1ADA-C1D3-4DF9-9317-95D61C28F6FA}"
+    ],
     "install_paths": [
       "%LOCALAPPDATA%\\123pan",
       "%PROGRAMDATA%\\123SyncCloud"
+    ],
+    "install_path_keywords": [
+      "\\123pan\\",
+      "\\123SyncCloud\\"
     ],
     "process_names": [
       "123pan.exe",
@@ -22,9 +32,6 @@
     "service_names": [
       "123SyncCloud Maintenance Service",
       "123SyncCloud Upgrade Service"
-    ],
-    "clsids": [
-      "{D5BE1ADA-C1D3-4DF9-9317-95D61C28F6FA}"
     ],
     "registry_keys": [
       "HKCU\\Software\\123pan",
@@ -79,30 +86,10 @@
     }
   ],
   "verify": [
-    {
-      "kind": "reg-not-exists",
-      "target": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\{D5BE1ADA-C1D3-4DF9-9317-95D61C28F6FA}",
-      "description": "命名空间项已不存在"
-    },
-    {
-      "kind": "reg-not-exists",
-      "target": "HKCU\\Software\\Classes\\CLSID\\{D5BE1ADA-C1D3-4DF9-9317-95D61C28F6FA}",
-      "description": "CLSID 本体已清除"
-    },
-    {
-      "kind": "service-state",
-      "target": "123SyncCloud Maintenance Service",
-      "expect_start_mode": "Disabled",
-      "expect_state_in": ["Stopped"],
-      "description": "维护服务已停止并禁用"
-    },
-    {
-      "kind": "service-state",
-      "target": "123SyncCloud Upgrade Service",
-      "expect_start_mode": "Disabled",
-      "expect_state_in": ["Stopped"],
-      "description": "升级服务已停止并禁用"
-    }
+    { "kind": "reg-not-exists", "target": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\{D5BE1ADA-C1D3-4DF9-9317-95D61C28F6FA}", "description": "命名空间项已不存在" },
+    { "kind": "reg-not-exists", "target": "HKCU\\Software\\Classes\\CLSID\\{D5BE1ADA-C1D3-4DF9-9317-95D61C28F6FA}", "description": "CLSID 本体已清除" },
+    { "kind": "service-state", "target": "123SyncCloud Maintenance Service", "expect_start_mode": "Disabled", "expect_state_in": ["Stopped"], "description": "维护服务已停止并禁用" },
+    { "kind": "service-state", "target": "123SyncCloud Upgrade Service", "expect_start_mode": "Disabled", "expect_state_in": ["Stopped"], "description": "升级服务已停止并禁用" }
   ],
-  "notes": "复原元凶不是 123 自己的服务,而是 explorer.exe 的命名空间一致性自愈机制 —— UI 删除走 Shell API 才会触发,reg delete 直删绕开 explorer 即无复原。本机实测:reg delete 双键 + 服务重启,30s 内键不回。安装包变成 ProgramData\\123SyncCloud 名称,与 LOCALAPPDATA\\123pan 主程序目录不同。"
+  "notes": "复原元凶不是 123 自己的服务, 而是 explorer.exe 的命名空间一致性自愈机制 —— UI 删除走 Shell API 才会触发, reg delete 直删绕开 explorer 即无复原。本机实测: reg delete 双键 + 服务重启, 30s 内键不回。证书主体『西安一二三云计算有限公司』使用 GlobalSign EV CodeSigning, SerialNumber=91610136MAB0YNW17E。安装目录有两套: ProgramData\\123SyncCloud (服务) 与 LOCALAPPDATA\\123pan (主程序), 二者目录名不同需都覆盖。"
 }

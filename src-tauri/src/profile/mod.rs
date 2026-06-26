@@ -27,8 +27,26 @@ pub struct Profile {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Fingerprints {
+    // 强指纹(v0.2 演化新增,优先级最高)
+    /// 代码签名主体 CN 名 — 国产流氓最稳定的指纹
+    #[serde(default)]
+    pub code_sign_subjects: Vec<String>,
+    /// MSI ProductCode {GUID}
+    #[serde(default)]
+    pub msi_product_code: Option<String>,
+    /// MSI UpgradeCode {GUID}
+    #[serde(default)]
+    pub msi_upgrade_code: Option<String>,
+    /// Shell 命名空间 / 右键扩展 CLSID
+    #[serde(default)]
+    pub clsids: Vec<String>,
+
+    // 路径/名称类指纹
     #[serde(default)]
     pub install_paths: Vec<String>,
+    /// 模糊安装目录关键字(如 `\7654Browser\`),命中即识别
+    #[serde(default)]
+    pub install_path_keywords: Vec<String>,
     #[serde(default)]
     pub process_names: Vec<String>,
     #[serde(default)]
@@ -36,11 +54,14 @@ pub struct Fingerprints {
     #[serde(default)]
     pub task_names: Vec<String>,
     #[serde(default)]
-    pub clsids: Vec<String>,
-    #[serde(default)]
     pub registry_keys: Vec<String>,
     #[serde(default)]
     pub shortcut_targets: Vec<String>,
+
+    // 网络/行为(为 P2 hosts-block 等动作预留)
+    /// 已知上报/广告域名
+    #[serde(default)]
+    pub report_domains: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
