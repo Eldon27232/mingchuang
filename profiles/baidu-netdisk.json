@@ -1,0 +1,81 @@
+{
+  "id": "baidu-netdisk",
+  "name": "百度网盘",
+  "vendor": "百度",
+  "category": "netdisk",
+  "severity": "high",
+  "tested_on": {
+    "windows": "Windows 11 Pro for Workstations 10.0.26200",
+    "date": "2026-06-27",
+    "verified_by": "本机手工实测"
+  },
+  "fingerprints": {
+    "install_paths": [
+      "%APPDATA%\\baidu\\BaiduNetdisk"
+    ],
+    "process_names": [
+      "BaiduNetdisk.exe",
+      "YunUtilityService.exe"
+    ],
+    "service_names": [
+      "BaiduNetdiskUtility"
+    ],
+    "clsids": [
+      "{679F137C-3162-45da-BE3C-2F9C3D093F64}"
+    ],
+    "registry_keys": [
+      "HKCU\\Software\\Baidu\\BaiduNetdisk",
+      "HKCU\\Software\\Classes\\CLSID\\{679F137C-3162-45da-BE3C-2F9C3D093F64}"
+    ]
+  },
+  "actions": [
+    {
+      "kind": "service-stop",
+      "target": "BaiduNetdiskUtility",
+      "reason": "停掉百度网盘 utility 服务",
+      "elevate": true,
+      "rollback": { "kind": "service-start", "target": "BaiduNetdiskUtility" }
+    },
+    {
+      "kind": "service-disable",
+      "target": "BaiduNetdiskUtility",
+      "reason": "禁止 utility 服务自启动",
+      "elevate": true,
+      "rollback": { "kind": "service-set-start", "target": "BaiduNetdiskUtility", "to": "Manual" }
+    },
+    {
+      "kind": "reg-delete",
+      "target": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\{679F137C-3162-45da-BE3C-2F9C3D093F64}",
+      "reason": "删除『此电脑』里 百度网盘 伪文件夹",
+      "elevate": false,
+      "rollback": { "kind": "reg-import", "from": "snapshot://this-action" }
+    },
+    {
+      "kind": "reg-delete",
+      "target": "HKCU\\Software\\Classes\\CLSID\\{679F137C-3162-45da-BE3C-2F9C3D093F64}",
+      "reason": "删除 百度网盘 Shell CLSID 本体",
+      "elevate": false,
+      "rollback": { "kind": "reg-import", "from": "snapshot://this-action" }
+    }
+  ],
+  "verify": [
+    {
+      "kind": "reg-not-exists",
+      "target": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\{679F137C-3162-45da-BE3C-2F9C3D093F64}",
+      "description": "命名空间项已不存在"
+    },
+    {
+      "kind": "reg-not-exists",
+      "target": "HKCU\\Software\\Classes\\CLSID\\{679F137C-3162-45da-BE3C-2F9C3D093F64}",
+      "description": "CLSID 本体已清除"
+    },
+    {
+      "kind": "service-state",
+      "target": "BaiduNetdiskUtility",
+      "expect_start_mode": "Disabled",
+      "expect_state_in": ["Stopped"],
+      "description": "utility 服务已禁用"
+    }
+  ],
+  "notes": "百度网盘的『此电脑』伪文件夹特征是右键没有删除项(因为是 NameSpace 注册,不是真文件)。CLSID 注册在 HKCU 用户级,清理无需管理员。BaiduNetdiskUtility 服务默认 Manual,通常不在跑。"
+}

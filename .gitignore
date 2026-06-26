@@ -1,0 +1,44 @@
+# Rust / Tauri 构建产物(等工程落地后启用)
+target/
+src-tauri/target/
+dist/
+build/
+out/
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.user
+*.suo
+*.iml
+
+# Windows 系统垃圾
+Thumbs.db
+ehthumbs.db
+desktop.ini
+*.lnk
+
+# 诊断脚本生成的日志(本地数据,不入库)
+scripts/diagnostics/*.log
+*.log
+
+# 临时/备份
+*.tmp
+*.bak
+*.swp
+~$*
+
+# 本机私有/敏感
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+
+# Claude / AI 工作目录
+.claude/
+.codex/
+
+# 操作还原包(运行时生成,本地用)
+snapshots/
+restore-points/
