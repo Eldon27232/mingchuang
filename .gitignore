@@ -1,9 +1,14 @@
-# Rust / Tauri 构建产物(等工程落地后启用)
+# Rust / Tauri 构建产物
 target/
 src-tauri/target/
+src-tauri/gen/
 dist/
 build/
 out/
+
+# Node
+node_modules/
+.pnpm-store/
 
 # IDE / 编辑器
 .vscode/

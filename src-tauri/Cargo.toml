@@ -1,0 +1,30 @@
+[package]
+name = "kuake-fuckyou"
+version = "0.0.1"
+edition = "2021"
+description = "整治国产流氓软件的 Windows 11 桌面治理工具"
+license = "MIT"
+repository = ""
+default-run = "kuake-fuckyou"
+
+[lib]
+name = "kuake_fuckyou_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
+windows-registry = "0.6"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
