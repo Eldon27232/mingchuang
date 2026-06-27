@@ -443,13 +443,10 @@ function EditAssocModal({ app, initialExtensions, presets, manifest, onCancel, o
         exePath: app.exe_path,
         extensions: extsArr,
       });
-      if (single.extensions_need_manual.length === 0) {
-        setResultSummary(`✓ ${single.extensions_set.length} 种文件类型已强制设为 ${app.display_name},不用任何手动操作`);
-        setTimeout(() => onSaved(), 1500);
-      } else {
-        setResultSummary(`${single.extensions_set.length} 种已强制设好, 但 ${single.extensions_need_manual.length} 种 Windows 不接受我们的哈希,需要手动选`);
-        setNeedManual(single.extensions_need_manual);
-      }
+      // 上次自动写 UserChoice hash 把用户的关联搞重置了, 本 commit 回退到稳妥的
+      // OpenWithProgids + 系统设置手动确认, 等下一轮接 SetUserFTA.exe sidecar 再做"全自动"
+      setResultSummary(`已把 ${app.display_name} 加进 Windows 的"打开方式"选项 (${single.extensions_set.length} 种文件类型)。现在跳到系统设置, 你点一下 ${app.display_name} 就生效。`);
+      setNeedManual(single.extensions_need_manual);
       void result;
     } catch (e) {
       alert(`保存失败: ${e}`);

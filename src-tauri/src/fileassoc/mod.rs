@@ -72,25 +72,26 @@ pub fn set_app_defaults(exe_path: &str, extensions: &[String]) -> Result<AssocRe
         if !seen.insert(ext.clone()) {
             continue;
         }
-        // 第一步: 写 OpenWithProgids (基础, 让我们的应用出现在"打开方式"列表里)
+        // 只写 OpenWithProgids — UserChoice hash 算法在不同 Windows 版本不一样,
+        // 自己算容易写错 Hash 导致 Windows 把整个 UserChoice 键清掉, 反而把用户原来的
+        // 设置也搞丢。**这次教训**: 必须用经过验证的 SetUserFTA.exe sidecar, 不自己算。
+        //
+        // 这一 commit 暂时关掉 force_set_user_choice, 改回 OpenWithProgids + 手动兜底,
+        // 等下一轮打包 SetUserFTA.exe 再开。
         match associate_ext(&ext, &progid) {
-            Ok(_) => {}
-            Err(e) => {
-                extensions_failed.push((ext.clone(), format!("OpenWithProgids: {e:#}")));
-                continue;
-            }
-        }
-        // 第二步: 算 UserChoice Hash 强制锁定 — 这才是真正生效的关键
-        match userchoice::force_set_user_choice(&ext, &progid) {
             Ok(_) => {
                 extensions_set.push(ext.clone());
+                // 即使 OpenWithProgids 成功, UserChoice 也得手动选才生效,
+                // 所以全部标 need_manual 让前端引导用户去系统设置
+                extensions_need_manual.push(ext.clone());
             }
             Err(e) => {
-                eprintln!("[fileassoc] UserChoice hash for {ext} failed: {e:#}");
-                extensions_need_manual.push(ext);
+                extensions_failed.push((ext.clone(), format!("OpenWithProgids: {e:#}")));
             }
         }
     }
+    // 让用户知道"set"了, 同时 "need_manual" 不是 0 (诚实)
+    let _ = &userchoice::force_set_user_choice; // 保留 symbol 引用避免 dead-code 警告
 
     notify_shell_assoc_changed();
 
