@@ -1,5 +1,5 @@
-// release 模式下隐藏控制台窗口
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// 始终隐藏控制台窗口 (dev 和 release 都隐藏, 避免管理员模式弹黑框)
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 fn main() {
     kuake_fuckyou_lib::run()

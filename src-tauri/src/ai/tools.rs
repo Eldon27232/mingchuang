@@ -204,9 +204,9 @@ fn run_query_processes(args: &Value) -> Result<ToolOutput> {
 fn run_query_services(args: &Value) -> Result<ToolOutput> {
     // 用 PowerShell Get-Service 简化 (本工具的 windows-service crate 不直接列所有)
     let filter = arg_str_opt(args, "name_substr").unwrap_or_default();
-    let out = std::process::Command::new("powershell")
+    let out = crate::sys_cmd::cmd("powershell")
         .args(["-NoProfile", "-Command",
-               &format!("Get-CimInstance Win32_Service | Select-Object Name,DisplayName,State,StartMode,PathName,ProcessId | ConvertTo-Json -Depth 3 -Compress")])
+               "Get-CimInstance Win32_Service | Select-Object Name,DisplayName,State,StartMode,PathName,ProcessId | ConvertTo-Json -Depth 3 -Compress"])
         .output()
         .context("调用 powershell Get-CimInstance Win32_Service 失败")?;
     if !out.status.success() {

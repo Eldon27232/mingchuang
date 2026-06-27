@@ -284,7 +284,7 @@ fn collect_keepalive_with_display() -> Result<(Vec<String>, Vec<String>)> {
         }
     }
 
-    let out = std::process::Command::new("powershell")
+    let out = crate::sys_cmd::cmd("powershell")
         .args([
             "-NoProfile",
             "-Command",

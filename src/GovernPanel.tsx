@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { humanizeAction } from "./labels";
 
 interface ScenarioStats {
@@ -55,27 +56,31 @@ export function GovernPanel() {
   const [sc, setSc] = useState<ScenarioStats | null>(null);
   const [snapshots, setSnapshots] = useState<SnapshotManifest[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(true);
   const [recentBatch, setRecentBatch] = useState<{ summary: string; snapshotIds: string[] } | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showUndo, setShowUndo] = useState(false);
 
   const refresh = async () => {
-    try {
-      const [_pc, _ka, _sc, _snaps] = await Promise.all([
-        invoke<ScenarioStats>("govern_scan_pc_namespace"),
-        invoke<ScenarioStats>("govern_scan_keepalive"),
-        invoke<ScenarioStats>("govern_scan_shortcuts"),
-        invoke<SnapshotManifest[]>("list_snapshots"),
-      ]);
-      setPc(_pc); setKa(_ka); setSc(_sc); setSnapshots(_snaps);
-    } catch (e) {
-      alert(`扫描失败: ${e}`);
-    }
+    setScanning(true);
+    // 分别 invoke 而不是 Promise.all,某一个慢不影响其他先显示
+    invoke<ScenarioStats>("govern_scan_pc_namespace").then(setPc).catch(e => console.error("scan_pc", e));
+    invoke<ScenarioStats>("govern_scan_keepalive").then(setKa).catch(e => console.error("scan_ka", e));
+    invoke<ScenarioStats>("govern_scan_shortcuts").then(setSc).catch(e => console.error("scan_sc", e));
+    invoke<SnapshotManifest[]>("list_snapshots").then(setSnapshots).catch(e => console.error("list_snap", e));
+    // 总 timeout 标记 scanning 结束(实际上各自 setState 后视图就 OK)
+    setTimeout(() => setScanning(false), 8000);
   };
 
   useEffect(() => { refresh(); }, []);
 
+  // 任意一个 scan 完成就视作 scan 结束
+  useEffect(() => {
+    if (pc && ka && sc) setScanning(false);
+  }, [pc, ka, sc]);
+
   const totalPending = (pc?.pending || 0) + (ka?.pending || 0) + (sc?.pending || 0);
+  const anyScanned = pc !== null || ka !== null || sc !== null;
   const allDisplayNames = [
     ...(pc?.display_names || []),
     ...(ka?.display_names || []),
@@ -149,6 +154,11 @@ export function GovernPanel() {
       <div className="hero-card">
         <div className="hero-title">一键体检 + 清理</div>
         <div className="hero-sub">扫一扫,清掉国产软件塞进系统的垃圾</div>
+        {scanning && !anyScanned && (
+          <div className="muted small">
+            <span className="thinking-dots">正在扫描你的电脑</span>
+          </div>
+        )}
         {totalPending > 0 && (
           <div className="hero-names">
             发现:
@@ -162,12 +172,13 @@ export function GovernPanel() {
         )}
         <button
           className="hero-btn"
-          disabled={busy !== null || totalPending === 0}
+          disabled={busy !== null || !anyScanned || totalPending === 0}
           onClick={oneClickAll}
         >
           {busy === "oneclick" ? "正在清理..." :
-            totalPending === 0 ? "✓ 你的电脑很干净,无需清理" :
-              `清掉这 ${totalPending} 项问题`}
+            !anyScanned ? "扫描中..." :
+              totalPending === 0 ? "✓ 你的电脑很干净,无需清理" :
+                `清掉这 ${totalPending} 项问题`}
         </button>
       </div>
 
@@ -314,6 +325,7 @@ function FileAssocCard() {
   const [selectedPresets, setSelectedPresets] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  const [customApps, setCustomApps] = useState<InstalledApp[]>([]);
 
   useEffect(() => {
     invoke<InstalledApp[]>("fileassoc_detect_installed_apps").then(setApps);
@@ -328,11 +340,42 @@ function FileAssocCard() {
     });
   };
 
-  // 选了 app 后, 默认勾选它对应类别的预设
   const onPickApp = (app: InstalledApp) => {
     setSelectedApp(app);
-    setSelectedPresets(new Set([app.category]));
+    // 自定义 app 不预选 category,系统 app 预选
+    if (!customApps.find(c => c.key === app.key)) {
+      setSelectedPresets(new Set([app.category]));
+    }
   };
+
+  const pickCustomExe = async () => {
+    try {
+      const picked = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "可执行文件", extensions: ["exe"] }],
+      });
+      if (!picked || typeof picked !== "string") return;
+      const exePath = picked as string;
+      const nameWithExt = exePath.split(/[\\/]/).pop() || exePath;
+      const stem = nameWithExt.replace(/\.exe$/i, "");
+      const custom: InstalledApp = {
+        key: `custom:${exePath}`,
+        display_name: stem,
+        category: "custom",
+        exe_path: exePath,
+      };
+      setCustomApps((arr) => {
+        if (arr.find((a) => a.exe_path === exePath)) return arr;
+        return [...arr, custom];
+      });
+      onPickApp(custom);
+    } catch (e) {
+      alert(`选择文件失败: ${e}`);
+    }
+  };
+
+  const allApps = [...apps, ...customApps];
 
   const allExts = presets.filter((p) => selectedPresets.has(p.id)).flatMap((p) => p.extensions);
 
@@ -361,21 +404,25 @@ function FileAssocCard() {
       <div className="hero-sub">选个软件 + 选格式, 让 Windows 默认用它打开</div>
 
       <div className="step-label">① 选个你信任的软件</div>
-      {apps.length === 0 ? (
-        <p className="muted small">没在本机找到推荐的应用 (PotPlayer/VLC/foobar2000/7-Zip 等)。可以装一个再回来。</p>
-      ) : (
-        <div className="app-grid">
-          {apps.map((a) => (
-            <div
-              key={a.key}
-              className={`app-tile ${selectedApp?.key === a.key ? "selected" : ""}`}
-              onClick={() => onPickApp(a)}
-            >
-              <div className="app-icon">{CAT_ICON[a.category] || "🛠️"}</div>
-              <div className="app-name">{a.display_name}</div>
-            </div>
-          ))}
+      <div className="app-grid">
+        {allApps.map((a) => (
+          <div
+            key={a.key}
+            className={`app-tile ${selectedApp?.key === a.key ? "selected" : ""}`}
+            onClick={() => onPickApp(a)}
+            title={a.exe_path}
+          >
+            <div className="app-icon">{CAT_ICON[a.category] || "🛠️"}</div>
+            <div className="app-name">{a.display_name}</div>
+          </div>
+        ))}
+        <div className="app-tile add-custom" onClick={pickCustomExe} title="从文件管理器挑一个 exe">
+          <div className="app-icon">＋</div>
+          <div className="app-name">我自己选 exe</div>
         </div>
+      </div>
+      {apps.length === 0 && customApps.length === 0 && (
+        <p className="muted small">没在本机找到推荐的应用,点 + 自己选一个 exe。</p>
       )}
 
       {selectedApp && (

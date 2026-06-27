@@ -101,15 +101,12 @@ fn associate_ext(ext: &str, progid: &str) -> Result<bool> {
     Ok(cleared)
 }
 
-/// 通知 Shell 关联已变 — 用 PowerShell 调 SHChangeNotify 比 P/Invoke 简单
+/// 通知 Shell 关联已变 — 用 windows crate 直接调 SHChangeNotify, 不起子进程
 fn notify_shell_assoc_changed() {
-    let _ = std::process::Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            r#"Add-Type -Namespace W -Name S -MemberDefinition '[DllImport("shell32.dll")] public static extern void SHChangeNotify(int e, int f, IntPtr i, IntPtr j);'; [W.S]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)"#,
-        ])
-        .output();
+    unsafe {
+        use windows::Win32::UI::Shell::{SHChangeNotify, SHCNE_ASSOCCHANGED, SHCNF_IDLIST};
+        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None);
+    }
 }
 
 #[allow(dead_code)]

@@ -118,8 +118,10 @@ body { margin: 0; background: var(--bg); color: var(--fg); -webkit-font-smoothin
 }
 .app-tile:hover { border-color: var(--border); }
 .app-tile.selected { border-color: var(--accent); background: #1a2638; }
+.app-tile.add-custom { border-style: dashed; border-color: var(--muted); }
+.app-tile.add-custom:hover { border-color: var(--accent); color: var(--accent); }
 .app-icon { font-size: 28px; margin-bottom: 6px; }
-.app-name { font-size: 12px; }
+.app-name { font-size: 12px; word-break: break-all; }
 
 .preset-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .chip {
