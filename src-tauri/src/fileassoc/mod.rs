@@ -13,6 +13,7 @@ pub mod detect;
 pub mod manifest;
 pub mod presets;
 pub mod progid;
+pub mod userchoice;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -30,9 +31,12 @@ pub struct AssocPreset {
 pub struct AssocResult {
     pub exe: String,
     pub progid: String,
+    /// 这些扩展名 OpenWithProgids + Hash 双写都成功(真正强制锁定)
     pub extensions_set: Vec<String>,
     pub extensions_failed: Vec<(String, String)>,
-    pub userchoice_cleared: Vec<String>,
+    /// 这些扩展名 OpenWithProgids 成功但 UserChoice Hash 写入被 Windows 拒(算法可能本机版本不兼容,
+    /// 需要兜底走系统设置)
+    pub extensions_need_manual: Vec<String>,
 }
 
 pub fn list_presets() -> Vec<AssocPreset> {
@@ -55,7 +59,7 @@ pub fn set_app_defaults(exe_path: &str, extensions: &[String]) -> Result<AssocRe
 
     let mut extensions_set = Vec::new();
     let mut extensions_failed = Vec::new();
-    let mut userchoice_cleared = Vec::new();
+    let mut extensions_need_manual = Vec::new();
 
     // 去重 + 校验
     let mut seen = std::collections::HashSet::new();
@@ -68,15 +72,22 @@ pub fn set_app_defaults(exe_path: &str, extensions: &[String]) -> Result<AssocRe
         if !seen.insert(ext.clone()) {
             continue;
         }
+        // 第一步: 写 OpenWithProgids (基础, 让我们的应用出现在"打开方式"列表里)
         match associate_ext(&ext, &progid) {
-            Ok(cleared_uc) => {
+            Ok(_) => {}
+            Err(e) => {
+                extensions_failed.push((ext.clone(), format!("OpenWithProgids: {e:#}")));
+                continue;
+            }
+        }
+        // 第二步: 算 UserChoice Hash 强制锁定 — 这才是真正生效的关键
+        match userchoice::force_set_user_choice(&ext, &progid) {
+            Ok(_) => {
                 extensions_set.push(ext.clone());
-                if cleared_uc {
-                    userchoice_cleared.push(ext);
-                }
             }
             Err(e) => {
-                extensions_failed.push((ext, format!("{e:#}")));
+                eprintln!("[fileassoc] UserChoice hash for {ext} failed: {e:#}");
+                extensions_need_manual.push(ext);
             }
         }
     }
@@ -88,7 +99,7 @@ pub fn set_app_defaults(exe_path: &str, extensions: &[String]) -> Result<AssocRe
         progid,
         extensions_set,
         extensions_failed,
-        userchoice_cleared,
+        extensions_need_manual,
     })
 }
 

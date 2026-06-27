@@ -35,6 +35,13 @@ interface AssocApp {
 interface AssocManifest {
   apps: AssocApp[];
 }
+interface AssocResult {
+  exe: string;
+  progid: string;
+  extensions_set: string[];
+  extensions_failed: [string, string][];
+  extensions_need_manual: string[];
+}
 interface ApplyAllResult {
   total_apps: number;
   applied_extensions: number;
@@ -406,8 +413,8 @@ function EditAssocModal({ app, initialExtensions, presets, manifest, onCancel, o
     }
   }
 
-  const [showVerify, setShowVerify] = useState(false);
-  const [verifyExts, setVerifyExts] = useState<string[]>([]);
+  const [resultSummary, setResultSummary] = useState<string | null>(null);
+  const [needManual, setNeedManual] = useState<string[]>([]);
 
   const save = async () => {
     setBusy(true);
@@ -427,10 +434,23 @@ function EditAssocModal({ app, initialExtensions, presets, manifest, onCancel, o
           extensions: extsArr,
         },
       });
-      await invoke("fileassoc_apply_all");
-      // Win10/11 不直接写 UserChoice 哈希就改不掉默认, 弹"验证"步骤
-      setVerifyExts(extsArr);
-      setShowVerify(true);
+      // 立即 apply, 拿到逐个扩展名是否成功
+      const result = await invoke<{ failed: [string, string, string][]; applied_extensions: number }>(
+        "fileassoc_apply_all"
+      );
+      // 用 set_app_defaults 走最新的逻辑路径单独检查 need_manual
+      const single = await invoke<AssocResult>("fileassoc_set_app_defaults", {
+        exePath: app.exe_path,
+        extensions: extsArr,
+      });
+      if (single.extensions_need_manual.length === 0) {
+        setResultSummary(`✓ ${single.extensions_set.length} 种文件类型已强制设为 ${app.display_name},不用任何手动操作`);
+        setTimeout(() => onSaved(), 1500);
+      } else {
+        setResultSummary(`${single.extensions_set.length} 种已强制设好, 但 ${single.extensions_need_manual.length} 种 Windows 不接受我们的哈希,需要手动选`);
+        setNeedManual(single.extensions_need_manual);
+      }
+      void result;
     } catch (e) {
       alert(`保存失败: ${e}`);
     } finally {
@@ -451,37 +471,48 @@ function EditAssocModal({ app, initialExtensions, presets, manifest, onCancel, o
     }
   };
 
-  if (showVerify) {
+  if (resultSummary) {
+    const allOk = needManual.length === 0;
     return (
       <div className="modal-backdrop" onClick={onSaved}>
         <div className="modal" onClick={(e) => e.stopPropagation()}>
-          <h3>差最后一步</h3>
-          <p>
-            ✓ 已经把 <strong>{app.display_name}</strong> 加进 Windows 的"打开方式"选项里了({verifyExts.length} 种文件类型)。
-          </p>
-          <p className="muted small">
-            <strong>但 Win11 限制太严</strong>:必须在系统设置里手动确认一次,我们没法 100% 自动绑定。
-            <br />我把系统的默认应用页打开,你做这两步:
-          </p>
-          <ol className="muted small">
-            <li>左边搜索你想改的文件类型(比如 <code>.mp4</code>)</li>
-            <li>右边点当前应用,选 <strong>{app.display_name}</strong></li>
-          </ol>
+          <h3>{allOk ? "完成" : "大部分已设, 少数需要手动"}</h3>
+          <p>{resultSummary}</p>
+          {allOk ? (
+            <p className="muted small">
+              已经直接写入 Windows 的 UserChoice 哈希,下次双击就用 <strong>{app.display_name}</strong> 打开,
+              不需要任何手动确认。
+            </p>
+          ) : (
+            <>
+              <p className="muted small">
+                这几种 Windows 系统版本不接受我们的哈希算法(可能 Win11 太新或太老):
+              </p>
+              <div className="ext-grid">
+                {needManual.map((e, i) => (
+                  <span key={i} className="chip on">{e}</span>
+                ))}
+              </div>
+              <p className="muted small">点下面按钮跳到 Windows 默认应用页手动选一下。</p>
+            </>
+          )}
           <div className="modal-buttons">
-            <button onClick={onSaved}>稍后</button>
-            <button
-              className="btn-exec"
-              onClick={async () => {
-                try {
-                  await invoke("fileassoc_open_settings", { ext: verifyExts[0]?.slice(1) ?? null });
-                } catch (e) {
-                  alert(`打开失败: ${e}`);
-                }
-                onSaved();
-              }}
-            >
-              打开 Windows 默认应用设置
-            </button>
+            {!allOk && (
+              <button
+                className="btn-exec"
+                onClick={async () => {
+                  try {
+                    await invoke("fileassoc_open_settings", { ext: needManual[0]?.slice(1) ?? null });
+                  } catch (e) {
+                    alert(`打开失败: ${e}`);
+                  }
+                  onSaved();
+                }}
+              >
+                打开 Windows 默认应用设置
+              </button>
+            )}
+            <button className="btn-exec" onClick={onSaved}>知道了</button>
           </div>
         </div>
       </div>
