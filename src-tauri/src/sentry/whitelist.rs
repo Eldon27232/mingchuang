@@ -106,7 +106,6 @@ pub fn load_merged() -> MergedWhitelist {
     MergedWhitelist { image_names: names }
 }
 
-#[allow(dead_code)]
 pub fn save_user(file: &WhitelistFile) -> Result<()> {
     let dir = sentry_dir();
     std::fs::create_dir_all(&dir).with_context(|| format!("创建 {dir:?} 失败"))?;
@@ -116,4 +115,15 @@ pub fn save_user(file: &WhitelistFile) -> Result<()> {
     std::fs::write(&tmp, json)?;
     std::fs::rename(&tmp, &path)?;
     Ok(())
+}
+
+pub fn load_user() -> WhitelistFile {
+    let path = sentry_dir().join("user.json");
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or(WhitelistFile {
+            version: 1,
+            entries: Vec::new(),
+        })
 }

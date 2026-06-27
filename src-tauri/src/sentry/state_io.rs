@@ -23,6 +23,16 @@ pub struct ControlFile {
     /// GUI 写入: 请求停止
     #[serde(default)]
     pub stop_requested: bool,
+    /// Toast 按钮点击后, sentry 帮手进程把动作写到这里, 主守护进程读后处理
+    #[serde(default)]
+    pub pending_actions: Vec<PendingAction>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingAction {
+    pub action: String, // "kill" / "whitelist" / "ignore"
+    pub pid: Option<u32>,
+    pub image_name: Option<String>,
 }
 
 pub fn state_path() -> PathBuf {
@@ -51,4 +61,23 @@ pub fn read_control() -> ControlFile {
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default()
+}
+
+pub fn write_control(c: &ControlFile) -> Result<()> {
+    let path = control_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("创建 {parent:?} 失败"))?;
+    }
+    let json = serde_json::to_string_pretty(c)?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json)?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(())
+}
+
+/// 把一个 pending action 追加到 control.json (sentry 帮手进程用)
+pub fn enqueue_pending_action(action: PendingAction) -> Result<()> {
+    let mut c = read_control();
+    c.pending_actions.push(action);
+    write_control(&c)
 }
