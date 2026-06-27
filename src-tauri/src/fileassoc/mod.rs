@@ -40,6 +40,12 @@ pub fn list_presets() -> Vec<AssocPreset> {
 
 /// 把 extensions 的默认打开方式设给 exe
 pub fn set_app_defaults(exe_path: &str, extensions: &[String]) -> Result<AssocResult> {
+    if extensions.is_empty() {
+        return Err(anyhow::anyhow!("没选任何扩展名"));
+    }
+    if exe_path.contains('"') {
+        return Err(anyhow::anyhow!("exe 路径含双引号, 拒绝处理: {exe_path}"));
+    }
     let exe = PathBuf::from(exe_path);
     if !exe.is_file() {
         return Err(anyhow::anyhow!("exe 不存在: {exe_path}"));
@@ -50,8 +56,17 @@ pub fn set_app_defaults(exe_path: &str, extensions: &[String]) -> Result<AssocRe
     let mut extensions_failed = Vec::new();
     let mut userchoice_cleared = Vec::new();
 
+    // 去重 + 校验
+    let mut seen = std::collections::HashSet::new();
     for raw_ext in extensions {
         let ext = normalize_ext(raw_ext);
+        if !is_valid_ext(&ext) {
+            extensions_failed.push((ext.clone(), "格式不对(应是 .xxx)".into()));
+            continue;
+        }
+        if !seen.insert(ext.clone()) {
+            continue;
+        }
         match associate_ext(&ext, &progid) {
             Ok(cleared_uc) => {
                 extensions_set.push(ext.clone());
@@ -76,6 +91,13 @@ pub fn set_app_defaults(exe_path: &str, extensions: &[String]) -> Result<AssocRe
     })
 }
 
+fn is_valid_ext(ext: &str) -> bool {
+    if !ext.starts_with('.') { return false; }
+    let body = &ext[1..];
+    if body.is_empty() || body.len() > 16 { return false; }
+    body.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
 /// 标准化扩展名为 `.xxx`(小写)
 fn normalize_ext(ext: &str) -> String {
     let trimmed = ext.trim().to_ascii_lowercase();
@@ -86,11 +108,13 @@ fn associate_ext(ext: &str, progid: &str) -> Result<bool> {
     // 1. 把 ProgId 写进 HKCU\Software\Classes\<ext>\OpenWithProgids
     let owpid_path = format!("Software\\Classes\\{ext}\\OpenWithProgids");
     let key = CURRENT_USER.create(&owpid_path).with_context(|| format!("创建 {owpid_path} 失败"))?;
-    // 默认值类型 REG_NONE / 空, 这里用空字符串
-    let _ = key.set_string(progid, "");
+    key.set_string(progid, "")
+        .with_context(|| format!("写 OpenWithProgids[{progid}] 失败"))?;
 
-    // 2. 清现有 UserChoice(让系统从 OpenWithProgids 选)
-    let uc_path = format!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\{ext}\\UserChoice");
+    // 2. 清现有 UserChoice (失败不影响,主路径是 OpenWithProgids)
+    let uc_path = format!(
+        "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\{ext}\\UserChoice"
+    );
     let mut cleared = false;
     if CURRENT_USER.open(&uc_path).is_ok() {
         if CURRENT_USER.remove_tree(&uc_path).is_ok() {

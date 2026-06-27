@@ -42,11 +42,28 @@ const PROTECTED_REGISTRY_PREFIXES: &[&str] = &[
     r"HKCU\Software\com.kuake.fuckyou",
 ];
 
+/// 精确匹配(不是前缀)的禁删路径 — 防止 target 末尾空 CLSID 等场景删整棵子树
+const PROTECTED_REGISTRY_EXACT: &[&str] = &[
+    r"HKCU\Software\Classes\CLSID",
+    r"HKLM\SOFTWARE\Classes\CLSID",
+    r"HKCU\Software\Classes",
+    r"HKLM\SOFTWARE\Classes",
+    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace",
+    r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace",
+];
+
 /// 检查注册表路径是否受保护。返回 Some(理由) 表示拒绝。
 ///
 /// path 形如 `HKCU\Software\Foo\Bar` 或 `HKLM\SOFTWARE\Bar`。前缀比较不分大小写。
 pub fn is_registry_protected(path: &str) -> Option<&'static str> {
     let normalized = normalize_hive(path);
+    let trimmed = normalized.trim().trim_end_matches('\\').to_lowercase();
+    // 精确匹配先查 — 防止"删 NameSpace 父键"等灾难
+    for exact in PROTECTED_REGISTRY_EXACT {
+        if trimmed == exact.to_lowercase() {
+            return Some(exact);
+        }
+    }
     let lower = normalized.to_lowercase();
     for prefix in PROTECTED_REGISTRY_PREFIXES {
         if lower.starts_with(&prefix.to_lowercase()) {

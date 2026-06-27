@@ -105,8 +105,12 @@ fn save_session_to_disk(s: &Session) {
     if std::fs::create_dir_all(&dir).is_err() {
         return;
     }
-    if let Ok(json) = serde_json::to_string_pretty(s) {
-        let _ = std::fs::write(session_file(&s.id), json);
+    let Ok(json) = serde_json::to_string_pretty(s) else { return; };
+    // 原子写: 先写 .tmp 再 rename, 避免 relaunch/崩溃留下半残 JSON
+    let final_path = session_file(&s.id);
+    let tmp_path = final_path.with_extension("json.tmp");
+    if std::fs::write(&tmp_path, json).is_ok() {
+        let _ = std::fs::rename(&tmp_path, &final_path);
     }
 }
 
@@ -114,16 +118,17 @@ fn load_all_sessions_from_disk() -> HashMap<String, Session> {
     let mut out = HashMap::new();
     let dir = sessions_dir();
     if !dir.is_dir() { return out; }
-    let entries = match std::fs::read_dir(&dir) {
-        Ok(e) => e,
-        Err(_) => return out,
-    };
-    for entry in entries.filter_map(|e| e.ok()) {
+    let Ok(entries) = std::fs::read_dir(&dir) else { return out; };
+    for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("json") { continue; }
-        if let Ok(txt) = std::fs::read_to_string(&path) {
-            if let Ok(s) = serde_json::from_str::<Session>(&txt) {
-                out.insert(s.id.clone(), s);
+        let Ok(txt) = std::fs::read_to_string(&path) else { continue; };
+        match serde_json::from_str::<Session>(&txt) {
+            Ok(s) => { out.insert(s.id.clone(), s); }
+            Err(e) => {
+                // 损坏文件转 .broken, 避免下次加载又卡住
+                eprintln!("session 损坏 {path:?}: {e}");
+                let _ = std::fs::rename(&path, path.with_extension("json.broken"));
             }
         }
     }
@@ -294,6 +299,16 @@ pub async fn send_user_message(session_id: &str, user_msg: String) -> Result<()>
         return Err(anyhow!("未配置 AI API key, 请在设置里填入"));
     }
 
+    // 互斥: 当前 thinking/waiting_approval 不接受新消息
+    let busy = with_sessions(|m| {
+        m.get(session_id).map(|s| {
+            matches!(s.status, SessionStatus::Thinking | SessionStatus::WaitingApproval)
+        }).unwrap_or(false)
+    });
+    if busy {
+        return Err(anyhow!("AI 正在处理上一条消息, 先停止或等它完成"));
+    }
+
     with_sessions(|m| {
         if let Some(s) = m.get_mut(session_id) {
             s.messages.push(ChatMessage {
@@ -316,12 +331,18 @@ pub async fn send_user_message(session_id: &str, user_msg: String) -> Result<()>
 /// 用户审批结果
 pub async fn approve_pending(session_id: &str, decision: ApprovalDecision) -> Result<()> {
     let cfg = crate::ai::config::load();
+    // 一次性把 pending_call 取走并切到 Thinking, 防止用户重复点导致并发执行
     let pending = with_sessions(|m| {
-        m.get_mut(session_id).and_then(|s| s.pending_call.clone())
+        m.get_mut(session_id).and_then(|s| {
+            let p = s.pending_call.take()?;
+            s.status = SessionStatus::Thinking;
+            Some(p)
+        })
     });
     let mut call = match pending {
         Some(c) => c,
-        None => return Err(anyhow!("无待审批 tool call")),
+        // 已经被处理过(并发点击),静默 OK
+        None => return Ok(()),
     };
 
     match decision {
@@ -537,15 +558,19 @@ async fn run_executor_loop(session_id: &str, cfg: &AiConfig) -> Result<()> {
                         update_call(session_id, &call);
                         with_sessions(|m| {
                             if let Some(s) = m.get_mut(session_id) {
+                                // 写更明确的指令避免 LLM 死循环换理由重试同一 tool
                                 s.messages.push(ChatMessage {
                                     role: "tool".into(),
-                                    content: format!("Reviewer 判定为危险并直接拒绝: {}", review.reason),
+                                    content: format!(
+                                        "审查员判定此工具调用有破坏性、已拒绝。原因: {}\n\
+                                         **请不要再尝试调用 {}, 换用别的安全工具或直接给用户文字回答。**",
+                                        review.reason, name
+                                    ),
                                     tool_calls: None,
                                     tool_call_id: Some(call.id.clone()),
                                 });
                             }
                         });
-                        // 不 break, 继续看下一个 tool call (其实 Anthropic 一次只发一组,这里循环也最多 1 次)
                     }
                     _ => {
                         // 等用户审批
@@ -617,10 +642,13 @@ async fn review_tool_call(cfg: &AiConfig, name: &str, args: &serde_json::Value) 
         .collect::<Vec<_>>()
         .join("");
     // 容错解析 JSON: 尝试找第一个 { 和最后一个 }
-    let json_str = if let (Some(i), Some(j)) = (text.find('{'), text.rfind('}')) {
-        &text[i..=j]
-    } else {
-        &text[..]
+    // **必须用 char_indices 而不是 find — 找到 byte 索引若落在多字节中文 brace 上会 panic**
+    let bytes = text.as_bytes();
+    let json_str = match (text.find('{'), text.rfind('}')) {
+        (Some(i), Some(j)) if i <= j && j < bytes.len() && text.is_char_boundary(i) && text.is_char_boundary(j + 1) => {
+            &text[i..=j]
+        }
+        _ => &text[..],
     };
     serde_json::from_str::<ReviewResult>(json_str)
         .with_context(|| format!("Reviewer 输出无法解析: {text}"))
@@ -629,6 +657,19 @@ async fn review_tool_call(cfg: &AiConfig, name: &str, args: &serde_json::Value) 
 fn to_anthropic_messages(msgs: &[ChatMessage]) -> Vec<AnthropicMessage> {
     // 把内部 ChatMessage 转 Anthropic 的格式
     // 注意: tool_result 必须是 user role, content 数组形式
+    //
+    // 防 400 invalid_request: edit_user_message 截掉 messages 后, 可能留下
+    // assistant.tool_calls 但没对应 tool_result。先扫一遍把没有匹配 tool_result 的
+    // tool_use id 收集起来, 转换时跳过这些 tool_use block。
+    let mut answered_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for m in msgs {
+        if m.role == "tool" {
+            if let Some(id) = &m.tool_call_id {
+                answered_ids.insert(id.clone());
+            }
+        }
+    }
+
     let mut out: Vec<AnthropicMessage> = Vec::new();
     for m in msgs {
         match m.role.as_str() {
@@ -643,6 +684,8 @@ fn to_anthropic_messages(msgs: &[ChatMessage]) -> Vec<AnthropicMessage> {
                 }
                 if let Some(calls) = &m.tool_calls {
                     for c in calls {
+                        // 跳过没有对应 tool_result 的孤儿 tool_use (会让 API 返 400)
+                        if !answered_ids.contains(&c.id) { continue; }
                         blocks.push(json!({
                             "type": "tool_use",
                             "id": c.id,
@@ -650,6 +693,10 @@ fn to_anthropic_messages(msgs: &[ChatMessage]) -> Vec<AnthropicMessage> {
                             "input": c.args
                         }));
                     }
+                }
+                if blocks.is_empty() {
+                    // 整条 assistant 消息全是孤儿 tool_use, 跳过
+                    continue;
                 }
                 out.push(AnthropicMessage {
                     role: "assistant".into(),

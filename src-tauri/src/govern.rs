@@ -61,9 +61,22 @@ pub fn scan_pc_namespace() -> Result<ScenarioStats> {
     })
 }
 
+/// 校验 CLSID 是 `{GUID}` 格式 — 防御 Workflow 报的 blocker:
+/// 空 CLSID 会拼成 `HKCU\Software\Classes\CLSID\`(尾部 \),一旦执行会删掉整个 CLSID 子树,
+/// 资源管理器和 COM 全部挂掉。这是绝对禁止的。
+fn is_valid_clsid(s: &str) -> bool {
+    let t = s.trim();
+    if !t.starts_with('{') || !t.ends_with('}') { return false; }
+    let inner = &t[1..t.len() - 1];
+    inner.len() >= 8 && inner.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+}
+
 pub fn clean_pc_namespace() -> Result<ScenarioRunResult> {
     let items = namespace::scan_pc_namespace_items()?;
-    let rogue: Vec<_> = items.into_iter().filter(|i| !i.is_system).collect();
+    let rogue: Vec<_> = items
+        .into_iter()
+        .filter(|i| !i.is_system && is_valid_clsid(&i.clsid))
+        .collect();
 
     let mut snapshot_ids = Vec::new();
     let mut attempted = 0;
@@ -72,7 +85,6 @@ pub fn clean_pc_namespace() -> Result<ScenarioRunResult> {
 
     for item in &rogue {
         attempted += 1;
-        // 一个临时画像, 双 reg-delete
         let actions = vec![
             Action {
                 kind: "reg-delete".into(),

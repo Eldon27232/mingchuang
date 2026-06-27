@@ -65,15 +65,15 @@ pub fn save(cfg: &AiConfig) -> Result<()> {
 }
 
 /// 取一个安全用于前端展示的版本 (API key 脱敏)
+/// **必须按 chars 切, 否则非 ASCII key (含中文/emoji) 会 panic on char boundary**
 pub fn redact(cfg: &AiConfig) -> AiConfig {
     let mut c = cfg.clone();
-    if c.api_key.len() > 8 {
-        c.api_key = format!(
-            "{}...{}",
-            &c.api_key[..6],
-            &c.api_key[c.api_key.len() - 4..]
-        );
-    } else if !c.api_key.is_empty() {
+    let chars: Vec<char> = c.api_key.chars().collect();
+    if chars.len() > 10 {
+        let head: String = chars.iter().take(6).collect();
+        let tail: String = chars.iter().skip(chars.len() - 4).collect();
+        c.api_key = format!("{head}...{tail}");
+    } else if !chars.is_empty() {
         c.api_key = "****".into();
     }
     c

@@ -121,7 +121,12 @@ pub fn ai_get_config() -> AiConfig {
 #[tauri::command]
 pub fn ai_set_config(cfg: AiConfig) -> Result<(), String> {
     let mut to_save = cfg.clone();
-    if to_save.api_key.contains("...") || to_save.api_key == "****" {
+    // 脱敏检测要严格,否则用户粘贴"sk-test-...abc" 这种含 ... 的真实 key 会被丢
+    // 我们的 redact 格式固定: 长度 13、第 6-8 位是"...", 用这个特征
+    let is_redacted = to_save.api_key == "****"
+        || (to_save.api_key.chars().count() == 13
+            && to_save.api_key.chars().skip(6).take(3).collect::<String>() == "...");
+    if is_redacted {
         let existing = ai_config::load();
         to_save.api_key = existing.api_key;
     }

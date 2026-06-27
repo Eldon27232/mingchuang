@@ -3,8 +3,12 @@
 //! 消费仓库根 `profiles/*.json`。开发期从相对路径找,发布期下一轮做嵌入资源。
 
 use anyhow::{Context, Result};
+use include_dir::{include_dir, Dir};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+/// 编译期把仓库根 profiles/ 嵌入二进制 — release 装机后即可用, 不再依赖路径回溯
+static EMBEDDED_PROFILES: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../profiles");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
@@ -106,23 +110,61 @@ fn profiles_dir() -> PathBuf {
 }
 
 pub fn load_profiles() -> Result<Vec<Profile>> {
-    let dir = profiles_dir();
     let mut out = Vec::new();
-    if !dir.is_dir() {
-        return Ok(out);
-    }
-    for entry in std::fs::read_dir(&dir).with_context(|| format!("读取目录失败: {dir:?}"))? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("json") {
-            continue;
+    let mut seen_ids = std::collections::HashSet::new();
+
+    // 1. 优先磁盘:%LOCALAPPDATA%\kuake-fuckyou\profiles 给用户覆盖/扩展用
+    let user_dir = user_profiles_dir();
+    if user_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&user_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) != Some("json") { continue; }
+                let Ok(txt) = std::fs::read_to_string(&path) else { continue; };
+                match serde_json::from_str::<Profile>(&txt) {
+                    Ok(p) => { seen_ids.insert(p.id.clone()); out.push(p); }
+                    Err(e) => eprintln!("用户画像解析失败 {path:?}: {e}"),
+                }
+            }
         }
-        let txt = std::fs::read_to_string(&path).with_context(|| format!("读取失败: {path:?}"))?;
-        match serde_json::from_str::<Profile>(&txt) {
-            Ok(p) => out.push(p),
-            Err(e) => eprintln!("画像解析失败 {path:?}: {e}"),
+    }
+
+    // 2. 开发期: 仓库根 profiles/ (CARGO_MANIFEST_DIR 兜底,只 dev 用)
+    #[cfg(debug_assertions)]
+    {
+        let dev_dir = profiles_dir();
+        if dev_dir.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&dev_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|s| s.to_str()) != Some("json") { continue; }
+                    let Ok(txt) = std::fs::read_to_string(&path) else { continue; };
+                    if let Ok(p) = serde_json::from_str::<Profile>(&txt) {
+                        if seen_ids.insert(p.id.clone()) { out.push(p); }
+                    }
+                }
+            }
         }
     }
+
+    // 3. 编译期嵌入: release 包后唯一可靠的画像来源
+    for f in EMBEDDED_PROFILES.files() {
+        if f.path().extension().and_then(|e| e.to_str()) != Some("json") { continue; }
+        let Ok(txt) = std::str::from_utf8(f.contents()) else { continue; };
+        match serde_json::from_str::<Profile>(txt) {
+            Ok(p) => { if seen_ids.insert(p.id.clone()) { out.push(p); } }
+            Err(e) => eprintln!("嵌入画像解析失败 {:?}: {e}", f.path()),
+        }
+    }
+
     out.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(out)
+}
+
+/// 用户可放自己的画像到这里, 优先级最高(覆盖嵌入版)
+fn user_profiles_dir() -> PathBuf {
+    let local = std::env::var("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."));
+    local.join("kuake-fuckyou").join("profiles")
 }

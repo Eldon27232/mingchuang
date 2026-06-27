@@ -31,36 +31,51 @@ pub fn check_elevation() -> ElevationStatus {
 /// 以管理员身份重新拉起本进程,自身退出。
 /// 调 ShellExecute(NULL, "runas", path, NULL, NULL, SW_NORMAL) — Windows 会弹 UAC。
 pub fn relaunch_as_admin() -> Result<(), String> {
-    let exe = std::env::current_exe().map_err(|e| format!("{e:#}"))?;
-    let exe_wide: Vec<u16> = exe
-        .to_string_lossy()
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
-    let verb_wide: Vec<u16> = "runas\0".encode_utf16().collect();
+    // dev 模式下二进制无 manifest, ShellExecuteW runas 重新拉起后**仍然**不会提权,
+    // 会陷入"未提权→点重启→拉起新进程→仍未提权"死循环。
+    // 检查目标是否是 npm/vite/cargo 进程链中的 dev 二进制 — debug 一律拒绝并提示用户。
+    #[cfg(debug_assertions)]
+    {
+        return Err(
+            "开发模式下 (cargo run / npm tauri dev) 二进制没有 UAC manifest, 重启不会提权。\
+             请关掉 dev server, 用「管理员 PowerShell」运行 npm run tauri dev, 或直接装 release 版。"
+                .into(),
+        );
+    }
 
-    use windows::core::PCWSTR;
-    use windows::Win32::UI::Shell::ShellExecuteW;
-    use windows::Win32::UI::WindowsAndMessaging::SW_NORMAL;
+    #[cfg(not(debug_assertions))]
+    {
+        let exe = std::env::current_exe().map_err(|e| format!("{e:#}"))?;
+        let exe_wide: Vec<u16> = exe
+            .to_string_lossy()
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let verb_wide: Vec<u16> = "runas\0".encode_utf16().collect();
 
-    let h = unsafe {
-        ShellExecuteW(
-            None,
-            PCWSTR(verb_wide.as_ptr()),
-            PCWSTR(exe_wide.as_ptr()),
-            PCWSTR::null(),
-            PCWSTR::null(),
-            SW_NORMAL,
-        )
-    };
-    // ShellExecuteW 返回值 > 32 表示成功
-    if (h.0 as usize) > 32 {
-        std::process::exit(0);
-    } else {
-        Err(format!(
-            "ShellExecuteW 失败 (返回 {:?}), 用户可能取消了 UAC",
-            h.0 as usize
-        ))
+        use windows::core::PCWSTR;
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_NORMAL;
+
+        let h = unsafe {
+            ShellExecuteW(
+                None,
+                PCWSTR(verb_wide.as_ptr()),
+                PCWSTR(exe_wide.as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                SW_NORMAL,
+            )
+        };
+        let code = h.0 as usize;
+        if code > 32 {
+            std::process::exit(0);
+        } else if code == 5 {
+            // SE_ERR_ACCESSDENIED — 用户在 UAC 对话框点了"否"
+            Err("你刚刚拒绝了 Windows 的提权请求,所以没法继续。再点一次「以管理员身份重启」试试。".into())
+        } else {
+            Err(format!("重启失败(系统错误码 {code})。可以手动右键此程序 → 以管理员身份运行。"))
+        }
     }
 }
 

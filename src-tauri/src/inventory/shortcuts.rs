@@ -11,7 +11,7 @@ use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
-    COINIT_APARTMENTTHREADED, STGM_READ,
+    COINIT_MULTITHREADED, STGM_READ,
 };
 use windows::Win32::UI::Shell::{IShellLinkW, ShellLink, SLGP_RAWPATH};
 
@@ -101,8 +101,10 @@ pub fn scan_all() -> Result<Vec<ShortcutItem>> {
     let mut out = Vec::new();
 
     unsafe {
-        let _hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        // 不管成功失败都尝试调 COM, 如果是 RPC_E_CHANGED_MODE 也无碍 (有人在外面 init 过了)
+        // 用 MTA 避免占据 Tauri 主线程的 STA; 用 hr 判断, 失败/CHANGED_MODE 不调 CoUninitialize
+        // 否则会扣 Tauri 已 init 的 COM ref count, 导致后续 Shell/dialog 挂掉
+        let hr = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let did_init = hr.is_ok();
 
         for dir in shortcut_dirs() {
             if !dir.is_dir() { continue; }
@@ -136,7 +138,9 @@ pub fn scan_all() -> Result<Vec<ShortcutItem>> {
             }
         }
 
-        CoUninitialize();
+        if did_init {
+            CoUninitialize();
+        }
     }
 
     Ok(out)
