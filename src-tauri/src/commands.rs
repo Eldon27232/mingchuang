@@ -2,6 +2,8 @@ use crate::action::{self, ActionPlan, ExecResult};
 use crate::ai::agent::{self, ApprovalDecision, Session};
 use crate::ai::config::{self as ai_config, AiConfig};
 use crate::elevation::{self, ElevationStatus};
+use crate::fileassoc::{self, AssocPreset, AssocResult};
+use crate::govern::{self, ScenarioRunResult, ScenarioStats};
 use crate::inventory::namespace::{scan_pc_namespace_items, PcNamespaceItem};
 use crate::profile::{load_profiles, Profile};
 use crate::snapshot::{self, SnapshotManifest};
@@ -51,7 +53,44 @@ pub fn restore_snapshot(snapshot_id: String) -> Result<(), String> {
     action::restore_snapshot(&snapshot_id).map_err(|e| format!("{e:#}"))
 }
 
-// ---------- AI ----------
+// ============ 治理场景 ============
+
+#[tauri::command]
+pub fn govern_scan_pc_namespace() -> Result<ScenarioStats, String> {
+    govern::scan_pc_namespace().map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn govern_clean_pc_namespace() -> Result<ScenarioRunResult, String> {
+    govern::clean_pc_namespace().map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn govern_scan_keepalive() -> Result<ScenarioStats, String> {
+    govern::scan_keepalive_services().map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn govern_stop_keepalive() -> Result<ScenarioRunResult, String> {
+    govern::stop_keepalive_services().map_err(|e| format!("{e:#}"))
+}
+
+// ============ 默认打开方式 ============
+
+#[tauri::command]
+pub fn fileassoc_list_presets() -> Vec<AssocPreset> {
+    fileassoc::list_presets()
+}
+
+#[tauri::command]
+pub fn fileassoc_set_app_defaults(
+    exe_path: String,
+    extensions: Vec<String>,
+) -> Result<AssocResult, String> {
+    fileassoc::set_app_defaults(&exe_path, &extensions).map_err(|e| format!("{e:#}"))
+}
+
+// ============ AI ============
 
 #[tauri::command]
 pub fn ai_get_config() -> AiConfig {
@@ -60,7 +99,6 @@ pub fn ai_get_config() -> AiConfig {
 
 #[tauri::command]
 pub fn ai_set_config(cfg: AiConfig) -> Result<(), String> {
-    // 如果传入 api_key 是脱敏值(含 ...), 保留原 key 不动
     let mut to_save = cfg.clone();
     if to_save.api_key.contains("...") || to_save.api_key == "****" {
         let existing = ai_config::load();
@@ -92,6 +130,29 @@ pub async fn ai_approve_pending(
     decision: ApprovalDecision,
 ) -> Result<(), String> {
     agent::approve_pending(&session_id, decision)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn ai_abort_session(session_id: String) {
+    agent::abort_session(&session_id);
+}
+
+#[tauri::command]
+pub async fn ai_retry_last(session_id: String) -> Result<(), String> {
+    agent::retry_last(&session_id)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub async fn ai_edit_user_message(
+    session_id: String,
+    msg_index: usize,
+    new_content: String,
+) -> Result<(), String> {
+    agent::edit_user_message(&session_id, msg_index, new_content)
         .await
         .map_err(|e| format!("{e:#}"))
 }

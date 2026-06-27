@@ -22,6 +22,7 @@ interface Session {
   status: string;
   tool_call_count: number;
   last_error?: string | null;
+  aborted?: boolean;
 }
 interface AiConfig {
   provider: string;
@@ -38,8 +39,8 @@ export function AiPanel() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [input, setInput] = useState("");
-  const [sending, setSending] = useState(false);
-  const [pollOn, setPollOn] = useState(false);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingText, setEditingText] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
 
   const loadConfig = async () => {
@@ -55,20 +56,21 @@ export function AiPanel() {
   const refreshSession = async (id: string) => {
     const s = await invoke<Session | null>("ai_get_session", { sessionId: id });
     setSession(s);
-    if (s && (s.status === "done" || s.status === "failed" || s.status === "waiting_approval" || s.status === "idle")) {
-      setPollOn(false);
-    }
   };
 
+  const isRunning = session?.status === "thinking";
+  const isWaiting = session?.status === "waiting_approval";
+
   useEffect(() => {
-    if (!sessionId || !pollOn) return;
-    const t = setInterval(() => refreshSession(sessionId), 1000);
+    if (!sessionId) return;
+    // 一直轮询(简单,下一轮换 event 推送)
+    const t = setInterval(() => refreshSession(sessionId), 800);
     return () => clearInterval(t);
-  }, [sessionId, pollOn]);
+  }, [sessionId]);
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [session]);
+  }, [session?.messages.length]);
 
   const startSession = async () => {
     const id = await invoke<string>("ai_create_session");
@@ -91,23 +93,71 @@ export function AiPanel() {
     }
     const msg = input;
     setInput("");
-    setSending(true);
-    setPollOn(true);
+    setSession((prev) =>
+      prev
+        ? { ...prev, messages: [...prev.messages, { role: "user", content: msg }], status: "thinking" }
+        : prev
+    );
     try {
-      // 立刻乐观追加用户消息
-      setSession((prev) => prev ? { ...prev, messages: [...prev.messages, { role: "user", content: msg }], status: "thinking" } : prev);
       await invoke("ai_send_message", { sessionId: sid, message: msg });
       await refreshSession(sid);
     } catch (e) {
       alert(`发送失败: ${e}`);
-    } finally {
-      setSending(false);
+      await refreshSession(sid);
+    }
+  };
+
+  const abort = async () => {
+    if (!sessionId) return;
+    try {
+      await invoke("ai_abort_session", { sessionId });
+      await refreshSession(sessionId);
+    } catch (e) {
+      alert(`中止失败: ${e}`);
+    }
+  };
+
+  const retry = async () => {
+    if (!sessionId) return;
+    try {
+      await invoke("ai_retry_last", { sessionId });
+      await refreshSession(sessionId);
+    } catch (e) {
+      alert(`重试失败: ${e}`);
+    }
+  };
+
+  const startEdit = (i: number, text: string) => {
+    setEditingIndex(i);
+    setEditingText(text);
+  };
+
+  const cancelEdit = () => {
+    setEditingIndex(null);
+    setEditingText("");
+  };
+
+  const submitEdit = async () => {
+    if (!sessionId || editingIndex === null) return;
+    const text = editingText;
+    const idx = editingIndex;
+    cancelEdit();
+    try {
+      // 先中止,避免编辑中 LLM 又改了 messages
+      await invoke("ai_abort_session", { sessionId });
+      await invoke("ai_edit_user_message", {
+        sessionId,
+        msgIndex: idx,
+        newContent: text,
+      });
+      await refreshSession(sessionId);
+    } catch (e) {
+      alert(`编辑失败: ${e}`);
     }
   };
 
   const approve = async (decision: "approve" | "deny") => {
     if (!sessionId) return;
-    setPollOn(true);
     try {
       await invoke("ai_approve_pending", { sessionId, decision });
       await refreshSession(sessionId);
@@ -116,6 +166,15 @@ export function AiPanel() {
     }
   };
 
+  // 找到最后一条 assistant 索引,用于显示"重试"
+  const lastAssistantIdx = (() => {
+    if (!session) return -1;
+    for (let i = session.messages.length - 1; i >= 0; i--) {
+      if (session.messages[i].role === "assistant") return i;
+    }
+    return -1;
+  })();
+
   return (
     <div className="ai-panel">
       <div className="ai-header">
@@ -123,7 +182,7 @@ export function AiPanel() {
         <div className="ai-header-actions">
           {sessionId && (
             <span className="muted small">
-              session={sessionId.slice(0, 14)}… · 状态={session?.status ?? "?"} · tool_calls={session?.tool_call_count ?? 0}
+              status={session?.status ?? "?"} · tools={session?.tool_call_count ?? 0}
             </span>
           )}
           <button onClick={startSession}>新会话</button>
@@ -150,10 +209,26 @@ export function AiPanel() {
 
       <div className="ai-log" ref={logRef}>
         {(session?.messages ?? []).map((m, i) => (
-          <MessageView key={i} m={m} />
+          <MessageView
+            key={i}
+            m={m}
+            index={i}
+            onEdit={startEdit}
+            onRetry={i === lastAssistantIdx && !isRunning && !isWaiting ? retry : undefined}
+            editing={editingIndex === i}
+            editingText={editingText}
+            setEditingText={setEditingText}
+            onSubmitEdit={submitEdit}
+            onCancelEdit={cancelEdit}
+          />
         ))}
         {session?.last_error && (
           <div className="ai-msg err">⚠ {session.last_error}</div>
+        )}
+        {isRunning && (
+          <div className="ai-msg assistant thinking">
+            <span className="thinking-dots">思考中</span>
+          </div>
         )}
       </div>
 
@@ -173,38 +248,132 @@ export function AiPanel() {
               send();
             }
           }}
-          disabled={sending || !config?.api_key}
+          disabled={isRunning || !config?.api_key}
         />
-        <button onClick={send} disabled={sending || !input.trim() || !config?.api_key}>
-          {sending ? "发送中..." : "发送"}
-        </button>
+        {isRunning || isWaiting ? (
+          <button onClick={abort} className="btn-restore">停止</button>
+        ) : (
+          <button onClick={send} disabled={!input.trim() || !config?.api_key}>发送</button>
+        )}
       </div>
     </div>
   );
 }
 
-function MessageView({ m }: { m: ChatMessage }) {
-  const role = m.role;
-  const cls = role === "user" ? "user" : role === "assistant" ? "assistant" : "tool";
-  return (
-    <div className={`ai-msg ${cls}`}>
-      <div className="ai-msg-role">{role}</div>
-      {m.content && <div className="ai-msg-text">{m.content}</div>}
-      {m.tool_calls?.map((c) => (
-        <div key={c.id} className={`ai-toolcall status-${c.status}`}>
-          <code>{c.name}</code>
-          <span className="muted small"> · {c.status}</span>
-          {c.review && (
-            <div className="ai-review small">
-              [Reviewer:{c.review.verdict}] {c.review.reason}
+function MessageView({
+  m,
+  index,
+  onEdit,
+  onRetry,
+  editing,
+  editingText,
+  setEditingText,
+  onSubmitEdit,
+  onCancelEdit,
+}: {
+  m: ChatMessage;
+  index: number;
+  onEdit: (i: number, text: string) => void;
+  onRetry?: () => void;
+  editing: boolean;
+  editingText: string;
+  setEditingText: (s: string) => void;
+  onSubmitEdit: () => void;
+  onCancelEdit: () => void;
+}) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const toggle = (id: string) => {
+    setExpanded((s) => {
+      const n = new Set(s);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+  };
+
+  // tool role 完全不展示 (这是 tool_result, AI 看的, 用户不需要)
+  if (m.role === "tool") return null;
+
+  if (m.role === "user") {
+    return (
+      <div
+        className="ai-msg user"
+        onContextMenu={(e) => {
+          e.preventDefault();
+          if (!editing) onEdit(index, m.content);
+        }}
+        title="右键重新编辑"
+      >
+        <div className="ai-msg-role">你</div>
+        {editing ? (
+          <div className="edit-box">
+            <textarea
+              value={editingText}
+              onChange={(e) => setEditingText(e.target.value)}
+              rows={Math.max(2, editingText.split("\n").length)}
+              autoFocus
+            />
+            <div className="edit-buttons">
+              <button onClick={onCancelEdit}>取消</button>
+              <button className="btn-exec" onClick={onSubmitEdit}>重发</button>
             </div>
-          )}
-          <pre className="ai-args">{JSON.stringify(c.args, null, 2)}</pre>
-          {c.result && <div className="ai-result small">→ {c.result}</div>}
+          </div>
+        ) : (
+          <div className="ai-msg-text">{m.content}</div>
+        )}
+      </div>
+    );
+  }
+
+  // assistant
+  return (
+    <div className="ai-msg assistant">
+      <div className="ai-msg-role">AI</div>
+      {m.content && <div className="ai-msg-text">{m.content}</div>}
+      {m.tool_calls?.map((c) => {
+        const ex = expanded.has(c.id);
+        return (
+          <div key={c.id} className={`ai-toolcall status-${c.status}`}>
+            <div className="toolcall-head" onClick={() => toggle(c.id)}>
+              <span className="caret">{ex ? "▼" : "▶"}</span>
+              <code>{c.name}</code>
+              <span className="muted small"> · {statusLabel(c.status)}</span>
+              {c.result && !ex && <span className="muted small toolcall-summary"> · {c.result}</span>}
+            </div>
+            {ex && (
+              <div className="toolcall-body">
+                {c.review && (
+                  <div className="ai-review small">
+                    [Reviewer:{c.review.verdict}] {c.review.reason}
+                  </div>
+                )}
+                <pre className="ai-args">{JSON.stringify(c.args, null, 2)}</pre>
+                {c.result && <div className="ai-result small">→ {c.result}</div>}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {onRetry && (
+        <div className="msg-actions">
+          <button onClick={onRetry} className="btn-retry">↻ 重试</button>
         </div>
-      ))}
+      )}
     </div>
   );
+}
+
+function statusLabel(s: string): string {
+  switch (s) {
+    case "reviewing": return "审查中";
+    case "waiting_approval": return "待批准";
+    case "approved": return "已批";
+    case "denied": return "已拒";
+    case "executing": return "执行中";
+    case "done": return "完成";
+    case "failed": return "失败";
+    default: return s;
+  }
 }
 
 function PendingApproval({
@@ -216,9 +385,9 @@ function PendingApproval({
 }) {
   return (
     <div className="ai-approval">
-      <div className="ai-approval-title">⏳ 待用户审批</div>
+      <div className="ai-approval-title">⏳ AI 想做这件事, 等你确认</div>
       <div>
-        AI 想调用 <code>{call.name}</code>:
+        要调用 <code>{call.name}</code>:
       </div>
       <pre>{JSON.stringify(call.args, null, 2)}</pre>
       {call.review && (
@@ -265,7 +434,7 @@ function SettingsModal({
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>AI 设置</h3>
-        <div className="muted small">本工具用 Anthropic Claude(下一轮支持 OpenAI 兼容)。</div>
+        <div className="muted small">本工具用 Anthropic Claude。下一轮加 OpenAI 兼容。</div>
 
         <label>Provider</label>
         <input value={draft.provider} disabled />
@@ -277,7 +446,7 @@ function SettingsModal({
           onChange={(e) => set("api_key", e.target.value)}
           placeholder="sk-ant-..."
         />
-        <div className="muted small">填新值会覆盖;留脱敏值不变。</div>
+        <div className="muted small">填新值会覆盖;含…的脱敏值会保留原 key。</div>
 
         <label>Base URL</label>
         <input value={draft.base_url} onChange={(e) => set("base_url", e.target.value)} />
@@ -288,7 +457,7 @@ function SettingsModal({
           onChange={(e) => set("model_executor", e.target.value)}
         />
 
-        <label>Reviewer 模型(小模型,做安全审查)</label>
+        <label>Reviewer 模型(小模型,审查危险动作)</label>
         <input
           value={draft.model_reviewer}
           onChange={(e) => set("model_reviewer", e.target.value)}
@@ -300,7 +469,7 @@ function SettingsModal({
             checked={draft.auto_approve_all}
             onChange={(e) => set("auto_approve_all", e.target.checked)}
           />
-          Reviewer 判 safe 时自动放行(否则破坏性动作都要用户点确认)
+          Reviewer 判 safe 时自动放行(否则破坏性动作都要点确认)
         </label>
 
         <div className="modal-buttons">

@@ -57,9 +57,12 @@ pub struct Session {
     /// 待用户审批的 tool call (一次只有一个)
     pub pending_call: Option<ToolCallView>,
     pub status: SessionStatus,
-    /// 累计 tool 调用次数, 防失控循环
+    /// 累计 tool 调用次数(仅供展示, 不再设硬上限)
     pub tool_call_count: usize,
     pub last_error: Option<String>,
+    /// 用户请求中止此 session 的执行
+    #[serde(default)]
+    pub aborted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -78,8 +81,6 @@ pub enum ApprovalDecision {
     Approve,
     Deny,
 }
-
-const MAX_TOOL_CALLS: usize = 30;
 
 static SESSIONS: Mutex<Option<HashMap<String, Session>>> = Mutex::new(None);
 
@@ -103,9 +104,74 @@ pub fn create_session() -> String {
         status: SessionStatus::Idle,
         tool_call_count: 0,
         last_error: None,
+        aborted: false,
     };
     with_sessions(|m| m.insert(id.clone(), s));
     id
+}
+
+/// 请求中止: 下一次 LLM 调用返回前会被检查, 设为 Done 并清 pending
+pub fn abort_session(session_id: &str) {
+    with_sessions(|m| {
+        if let Some(s) = m.get_mut(session_id) {
+            s.aborted = true;
+            s.pending_call = None;
+            if matches!(s.status, SessionStatus::Thinking | SessionStatus::WaitingApproval) {
+                s.status = SessionStatus::Done;
+                s.last_error = Some("已被用户中止".into());
+            }
+        }
+    });
+}
+
+/// 重试最后一条用户消息: 截掉之后的所有 messages, 然后再发一次
+pub async fn retry_last(session_id: &str) -> Result<()> {
+    let cfg = crate::ai::config::load();
+    let last_user = with_sessions(|m| {
+        m.get_mut(session_id).and_then(|s| {
+            let idx = s.messages.iter().rposition(|m| m.role == "user")?;
+            let text = s.messages[idx].content.clone();
+            s.messages.truncate(idx);
+            s.aborted = false;
+            s.last_error = None;
+            s.status = SessionStatus::Thinking;
+            Some(text)
+        })
+    });
+    match last_user {
+        Some(t) => send_user_message(session_id, t).await,
+        None => Err(anyhow!("没有可重试的用户消息")),
+    }
+}
+
+/// 编辑某条用户消息: 把该 index 之后(含)的全删掉, 用 new_content 重新发
+pub async fn edit_user_message(
+    session_id: &str,
+    msg_index: usize,
+    new_content: String,
+) -> Result<()> {
+    let cfg = crate::ai::config::load();
+    let ok = with_sessions(|m| {
+        m.get_mut(session_id).map(|s| {
+            if msg_index < s.messages.len() && s.messages[msg_index].role == "user" {
+                s.messages.truncate(msg_index);
+                s.aborted = false;
+                s.last_error = None;
+                s.status = SessionStatus::Thinking;
+                true
+            } else {
+                false
+            }
+        })
+    }).unwrap_or(false);
+    if !ok {
+        return Err(anyhow!("msg_index 不指向有效的 user 消息"));
+    }
+    send_user_message(session_id, new_content).await
+}
+
+fn check_aborted(session_id: &str) -> bool {
+    with_sessions(|m| m.get(session_id).map(|s| s.aborted).unwrap_or(false))
 }
 
 pub fn get_session(id: &str) -> Option<Session> {
@@ -239,30 +305,23 @@ fn update_call(session_id: &str, call: &ToolCallView) {
     });
 }
 
-/// Executor 主循环: 调 LLM → 处理 blocks → 继续直到 end_turn 或 等用户
+/// Executor 主循环: 调 LLM → 处理 blocks → 继续直到 end_turn 或 等用户 / 被中止
 async fn run_executor_loop(session_id: &str, cfg: &AiConfig) -> Result<()> {
     loop {
-        // 取当前 session 状态构造 LLM 请求
-        let (messages, count) = with_sessions(|m| {
-            let s = m.get(session_id).cloned();
-            (s.as_ref().map(|s| s.messages.clone()).unwrap_or_default(),
-             s.as_ref().map(|s| s.tool_call_count).unwrap_or(0))
-        });
-        if count >= MAX_TOOL_CALLS {
+        if check_aborted(session_id) {
             with_sessions(|m| {
                 if let Some(s) = m.get_mut(session_id) {
-                    s.status = SessionStatus::Failed;
-                    s.last_error = Some(format!("超过最大 tool 调用数 {MAX_TOOL_CALLS}, 强制停止"));
-                    s.messages.push(ChatMessage {
-                        role: "assistant".into(),
-                        content: format!("⚠ 已达 tool 调用上限 {MAX_TOOL_CALLS},停止以防失控。"),
-                        tool_calls: None,
-                        tool_call_id: None,
-                    });
+                    s.status = SessionStatus::Done;
                 }
             });
             return Ok(());
         }
+        // 取当前 session 状态构造 LLM 请求(不再有 tool 调用上限)
+        let messages = with_sessions(|m| {
+            m.get(session_id)
+                .map(|s| s.messages.clone())
+                .unwrap_or_default()
+        });
 
         let anthropic_msgs = to_anthropic_messages(&messages);
         let req = AnthropicRequest {
