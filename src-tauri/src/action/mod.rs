@@ -1,5 +1,6 @@
-//! 动作引擎 — 支持 reg-delete / service-stop / service-disable / process-kill / task-disable
+//! 动作引擎 — 支持 reg-delete / service-stop / service-disable / process-kill / task-disable / file-delete
 
+pub mod file;
 pub mod process;
 pub mod reg;
 pub mod service;
@@ -40,13 +41,20 @@ pub struct ExecResult {
     pub error: Option<String>,
 }
 
-const REVERSIBLE_KINDS: &[&str] = &["reg-delete", "service-stop", "service-disable", "task-disable"];
+const REVERSIBLE_KINDS: &[&str] = &[
+    "reg-delete",
+    "service-stop",
+    "service-disable",
+    "task-disable",
+    "file-delete",
+];
 const SUPPORTED_KINDS: &[&str] = &[
     "reg-delete",
     "service-stop",
     "service-disable",
     "task-disable",
     "process-kill",
+    "file-delete",
 ];
 
 pub fn plan_action(profile: &Profile, action_index: usize, action: &Action) -> ActionPlan {
@@ -86,9 +94,20 @@ pub fn plan_action(profile: &Profile, action_index: usize, action: &Action) -> A
         "service-disable" => plan_service_disable(&mut plan, action),
         "task-disable" => plan_task_disable(&mut plan, action),
         "process-kill" => plan_process_kill(&mut plan, action),
+        "file-delete" => plan_file_delete(&mut plan, action),
         _ => {} // 已被 SUPPORTED_KINDS 拦
     }
     plan
+}
+
+fn plan_file_delete(plan: &mut ActionPlan, action: &Action) {
+    let path = std::path::Path::new(&action.target);
+    if !path.is_file() {
+        plan.will_change = "目标文件不存在, 跳过 (no-op)".into();
+        return;
+    }
+    let size = path.metadata().map(|m| m.len()).unwrap_or(0);
+    plan.will_change = format!("将删除文件 {} ({} 字节, 已快照可还原)", action.target, size);
 }
 
 fn plan_reg_delete(plan: &mut ActionPlan, action: &Action) {
@@ -193,6 +212,7 @@ pub fn execute_action(profile: &Profile, action_index: usize) -> ExecResult {
         "service-disable" => exec_service_disable(profile, action_index, action),
         "task-disable" => exec_task_disable(profile, action_index, action),
         "process-kill" => exec_process_kill(profile, action_index, action),
+        "file-delete" => exec_file_delete(profile, action_index, action),
         other => Err(anyhow!("kind={other} 尚未实现")),
     };
 
@@ -312,6 +332,20 @@ fn exec_task_disable(profile: &Profile, action_index: usize, action: &Action) ->
     Ok(snap_id)
 }
 
+fn exec_file_delete(profile: &Profile, action_index: usize, action: &Action) -> Result<String> {
+    let snap_id = snapshot::new_snapshot_id();
+    let dir = snapshot::create_snapshot_dir(&snap_id)?;
+    let fsnap = crate::snapshot::file::snapshot(&action.target).context("文件快照失败")?;
+    let json = serde_json::to_string_pretty(&fsnap)?;
+    std::fs::write(dir.join("file.json"), json)?;
+    snapshot::write_manifest(
+        &dir,
+        &make_manifest(&snap_id, profile, action_index, action, Some("file.json"), true),
+    )?;
+    file::delete_file(&action.target)?;
+    Ok(snap_id)
+}
+
 fn exec_process_kill(profile: &Profile, action_index: usize, action: &Action) -> Result<String> {
     let snap_id = snapshot::new_snapshot_id();
     let dir = snapshot::create_snapshot_dir(&snap_id)?;
@@ -362,6 +396,11 @@ pub fn restore_snapshot(snapshot_id: &str) -> Result<()> {
         }
         "task-disable" => {
             task::enable_task(&manifest.action_target)?;
+        }
+        "file-delete" => {
+            let txt = std::fs::read_to_string(dir.join("file.json"))?;
+            let snap: crate::snapshot::file::FileSnapshot = serde_json::from_str(&txt)?;
+            crate::snapshot::file::restore(&snap)?;
         }
         other => return Err(anyhow!("还原 kind={other} 尚未实现")),
     }

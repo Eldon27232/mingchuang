@@ -75,6 +75,16 @@ pub fn govern_stop_keepalive() -> Result<ScenarioRunResult, String> {
     govern::stop_keepalive_services().map_err(|e| format!("{e:#}"))
 }
 
+#[tauri::command]
+pub fn govern_scan_shortcuts() -> Result<ScenarioStats, String> {
+    govern::scan_rogue_shortcuts().map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn govern_clean_shortcuts() -> Result<ScenarioRunResult, String> {
+    govern::clean_rogue_shortcuts().map_err(|e| format!("{e:#}"))
+}
+
 // ============ 默认打开方式 ============
 
 #[tauri::command]
@@ -110,6 +120,16 @@ pub fn ai_set_config(cfg: AiConfig) -> Result<(), String> {
 #[tauri::command]
 pub fn ai_create_session() -> String {
     agent::create_session()
+}
+
+#[tauri::command]
+pub fn ai_list_sessions() -> Vec<agent::SessionSummary> {
+    agent::list_persisted_sessions()
+}
+
+#[tauri::command]
+pub fn ai_delete_session(session_id: String) -> Result<(), String> {
+    agent::delete_session(&session_id).map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]

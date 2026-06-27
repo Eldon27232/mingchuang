@@ -37,19 +37,22 @@ interface SnapshotManifest {
 export function GovernPanel() {
   const [pcStats, setPcStats] = useState<ScenarioStats | null>(null);
   const [kaStats, setKaStats] = useState<ScenarioStats | null>(null);
+  const [scStats, setScStats] = useState<ScenarioStats | null>(null);
   const [snapshots, setSnapshots] = useState<SnapshotManifest[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<string | null>(null);
 
   const refresh = async () => {
     try {
-      const [pc, ka, snaps] = await Promise.all([
+      const [pc, ka, sc, snaps] = await Promise.all([
         invoke<ScenarioStats>("govern_scan_pc_namespace"),
         invoke<ScenarioStats>("govern_scan_keepalive"),
+        invoke<ScenarioStats>("govern_scan_shortcuts"),
         invoke<SnapshotManifest[]>("list_snapshots"),
       ]);
       setPcStats(pc);
       setKaStats(ka);
+      setScStats(sc);
       setSnapshots(snaps);
     } catch (e) {
       setLastResult(`刷新失败: ${e}`);
@@ -111,6 +114,13 @@ export function GovernPanel() {
           stats={kaStats}
           busy={busy === "govern_stop_keepalive"}
           onRun={() => runScenario("govern_stop_keepalive", "停所有保活服务并禁自启")}
+        />
+        <ScenarioCard
+          title="清流氓快捷方式"
+          desc="删除桌面/开始菜单上命中流氓画像的 .lnk 快捷方式。"
+          stats={scStats}
+          busy={busy === "govern_clean_shortcuts"}
+          onRun={() => runScenario("govern_clean_shortcuts", "清流氓快捷方式")}
         />
         <FileAssocCard />
       </section>

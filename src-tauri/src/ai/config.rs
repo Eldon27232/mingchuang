@@ -21,6 +21,7 @@ pub struct AiConfig {
 impl Default for AiConfig {
     fn default() -> Self {
         Self {
+            // anthropic | openai (后者也含所有 OpenAI 兼容服务: DeepSeek/Kimi/智谱/本地 vllm 等)
             provider: "anthropic".into(),
             api_key: String::new(),
             base_url: "https://api.anthropic.com".into(),

@@ -5,6 +5,7 @@
 //!   ├── manifest.json     元数据
 //!   └── payload.<ext>     按动作类型: registry.json / service.json / task.xml / process.json
 
+pub mod file;
 pub mod reg;
 pub mod service;
 

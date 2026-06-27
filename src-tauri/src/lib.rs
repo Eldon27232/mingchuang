@@ -25,6 +25,8 @@ pub fn run() {
             commands::govern_clean_pc_namespace,
             commands::govern_scan_keepalive,
             commands::govern_stop_keepalive,
+            commands::govern_scan_shortcuts,
+            commands::govern_clean_shortcuts,
             // 默认打开方式
             commands::fileassoc_list_presets,
             commands::fileassoc_set_app_defaults,
@@ -32,6 +34,8 @@ pub fn run() {
             commands::ai_get_config,
             commands::ai_set_config,
             commands::ai_create_session,
+            commands::ai_list_sessions,
+            commands::ai_delete_session,
             commands::ai_get_session,
             commands::ai_send_message,
             commands::ai_approve_pending,

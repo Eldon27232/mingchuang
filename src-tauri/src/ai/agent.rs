@@ -14,9 +14,10 @@ use crate::ai::config::AiConfig;
 use crate::ai::tools;
 use crate::ai::{ChatMessage, ReviewResult, ToolCallStatus, ToolCallView};
 use anyhow::{anyhow, Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 const MAX_TOKENS: u32 = 4096;
@@ -50,7 +51,7 @@ const REVIEWER_PROMPT: &str = r#"你是 kuake-fuckyou 的安全审查员。Execu
 
 只输出 JSON, 不要其他文字。"#;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
     pub messages: Vec<ChatMessage>,
@@ -63,9 +64,14 @@ pub struct Session {
     /// 用户请求中止此 session 的执行
     #[serde(default)]
     pub aborted: bool,
+    /// 创建时间 + 最后修改时间(给前端列表用)
+    #[serde(default)]
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
     Idle,
@@ -75,11 +81,96 @@ pub enum SessionStatus {
     Failed,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalDecision {
     Approve,
     Deny,
+}
+
+// ============ 持久化 ============
+fn sessions_dir() -> PathBuf {
+    let local = std::env::var("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."));
+    local.join("kuake-fuckyou").join("ai-sessions")
+}
+
+fn session_file(id: &str) -> PathBuf {
+    sessions_dir().join(format!("{id}.json"))
+}
+
+fn save_session_to_disk(s: &Session) {
+    let dir = sessions_dir();
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    if let Ok(json) = serde_json::to_string_pretty(s) {
+        let _ = std::fs::write(session_file(&s.id), json);
+    }
+}
+
+fn load_all_sessions_from_disk() -> HashMap<String, Session> {
+    let mut out = HashMap::new();
+    let dir = sessions_dir();
+    if !dir.is_dir() { return out; }
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(_) => return out,
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") { continue; }
+        if let Ok(txt) = std::fs::read_to_string(&path) {
+            if let Ok(s) = serde_json::from_str::<Session>(&txt) {
+                out.insert(s.id.clone(), s);
+            }
+        }
+    }
+    out
+}
+
+/// 列出所有持久化 session(给前端历史会话列表用)。按 updated_at 倒序。
+pub fn list_persisted_sessions() -> Vec<SessionSummary> {
+    let mut sessions: Vec<Session> = with_sessions(|m| m.values().cloned().collect());
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    sessions
+        .into_iter()
+        .map(|s| {
+            let first_user = s
+                .messages
+                .iter()
+                .find(|m| m.role == "user")
+                .map(|m| m.content.chars().take(60).collect::<String>())
+                .unwrap_or_default();
+            SessionSummary {
+                id: s.id,
+                title: if first_user.is_empty() { "新会话".into() } else { first_user },
+                status: s.status,
+                updated_at: s.updated_at,
+                message_count: s.messages.len(),
+            }
+        })
+        .collect()
+}
+
+pub fn delete_session(id: &str) -> Result<()> {
+    with_sessions(|m| m.remove(id));
+    let path = session_file(id);
+    if path.exists() {
+        std::fs::remove_file(&path)
+            .with_context(|| format!("删除 session 文件失败: {path:?}"))?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionSummary {
+    pub id: String,
+    pub title: String,
+    pub status: SessionStatus,
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub message_count: usize,
 }
 
 static SESSIONS: Mutex<Option<HashMap<String, Session>>> = Mutex::new(None);
@@ -90,13 +181,28 @@ where
 {
     let mut g = SESSIONS.lock().unwrap();
     if g.is_none() {
-        *g = Some(HashMap::new());
+        // 首次访问: 从磁盘加载所有 session
+        *g = Some(load_all_sessions_from_disk());
     }
     f(g.as_mut().unwrap())
 }
 
+/// 在每次 session 修改后调用, 自动持久化
+fn touch_and_persist(session_id: &str) {
+    let snapshot = with_sessions(|m| {
+        if let Some(s) = m.get_mut(session_id) {
+            s.updated_at = Some(chrono::Utc::now());
+            Some(s.clone())
+        } else { None }
+    });
+    if let Some(s) = snapshot {
+        save_session_to_disk(&s);
+    }
+}
+
 pub fn create_session() -> String {
     let id = crate::snapshot::new_snapshot_id();
+    let now = chrono::Utc::now();
     let s = Session {
         id: id.clone(),
         messages: Vec::new(),
@@ -105,8 +211,11 @@ pub fn create_session() -> String {
         tool_call_count: 0,
         last_error: None,
         aborted: false,
+        created_at: Some(now),
+        updated_at: Some(now),
     };
-    with_sessions(|m| m.insert(id.clone(), s));
+    with_sessions(|m| m.insert(id.clone(), s.clone()));
+    save_session_to_disk(&s);
     id
 }
 
@@ -197,8 +306,11 @@ pub async fn send_user_message(session_id: &str, user_msg: String) -> Result<()>
             s.last_error = None;
         }
     });
+    touch_and_persist(session_id);
 
-    run_executor_loop(session_id, &cfg).await
+    let r = run_executor_loop(session_id, &cfg).await;
+    touch_and_persist(session_id);
+    r
 }
 
 /// 用户审批结果

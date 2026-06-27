@@ -4,7 +4,7 @@
 //! 后端按内置规则 + 画像档案 自动判定流氓项, 批量执行, 返回汇总结果。
 
 use crate::action;
-use crate::inventory::namespace;
+use crate::inventory::{namespace, shortcuts};
 use crate::profile::{load_profiles, Action, Profile};
 use anyhow::Result;
 use serde::Serialize;
@@ -94,6 +94,68 @@ pub fn clean_pc_namespace() -> Result<ScenarioRunResult> {
     let summary = format!(
         "清『此电脑』完成: 共 {} 项第三方伪文件夹, 成功 {}, 失败 {}, 已生成 {} 个还原快照。",
         rogue.len(),
+        succeeded,
+        failed,
+        snapshot_ids.len()
+    );
+
+    Ok(ScenarioRunResult {
+        attempted,
+        succeeded,
+        failed,
+        snapshot_ids,
+        summary,
+    })
+}
+
+// =============================================================================
+// 场景 3: 一键清流氓快捷方式
+// =============================================================================
+
+pub fn scan_rogue_shortcuts() -> Result<ScenarioStats> {
+    let items = shortcuts::scan_rogue()?;
+    let summary = if items.is_empty() {
+        "桌面/开始菜单没发现已知国产流氓的快捷方式。".into()
+    } else {
+        format!("桌面/开始菜单有 {} 个已知国产流氓的快捷方式可清。", items.len())
+    };
+    Ok(ScenarioStats {
+        pending: items.len(),
+        summary,
+    })
+}
+
+pub fn clean_rogue_shortcuts() -> Result<ScenarioRunResult> {
+    let items = shortcuts::scan_rogue()?;
+    let mut snapshot_ids = Vec::new();
+    let mut attempted = 0;
+    let mut succeeded = 0;
+    let mut failed = 0;
+
+    for it in &items {
+        attempted += 1;
+        let actions = vec![Action {
+            kind: "file-delete".into(),
+            target: it.path.clone(),
+            reason: format!("删除流氓快捷方式 {}", it.name),
+            elevate: false,
+            rollback: None,
+        }];
+        let p = adhoc_profile(actions);
+        let r = action::execute_action(&p, 0);
+        if r.success {
+            succeeded += 1;
+            if let Some(sid) = r.snapshot_id {
+                snapshot_ids.push(sid);
+            }
+        } else {
+            failed += 1;
+        }
+    }
+
+    let summary = format!(
+        "清快捷方式完成: 共 {} 个流氓项, 成功 {}, 失败 {}, 已生成 {} 个还原快照。",
+        items.len(),
         succeeded,
         failed,
         snapshot_ids.len()
