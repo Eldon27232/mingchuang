@@ -1,4 +1,5 @@
 use crate::action::{self, ActionPlan, ExecResult};
+use crate::sentry_client::{self, AlertEvent, SentryStatus, WhitelistFile};
 use crate::ai::agent::{self, ApprovalDecision, Session};
 use crate::ai::config::{self as ai_config, AiConfig};
 use crate::elevation::{self, ElevationStatus};
@@ -130,6 +131,63 @@ pub fn fileassoc_remove_app(key: String) -> Result<AssocManifest, String> {
 #[tauri::command]
 pub fn fileassoc_apply_all() -> Result<ApplyAllResult, String> {
     assoc_manifest::apply_all().map_err(|e| format!("{e:#}"))
+}
+
+// ============ Sentry (后台网络监控) ============
+
+#[tauri::command]
+pub fn sentry_get_status() -> SentryStatus {
+    sentry_client::get_status()
+}
+
+#[tauri::command]
+pub fn sentry_enable_autostart() -> Result<(), String> {
+    sentry_client::enable_autostart().map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn sentry_disable_autostart() -> Result<(), String> {
+    sentry_client::disable_autostart().map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn sentry_start_now() -> Result<(), String> {
+    sentry_client::start_now().map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn sentry_pause(minutes: i64) -> Result<(), String> {
+    sentry_client::pause_for(minutes).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn sentry_resume() -> Result<(), String> {
+    sentry_client::resume().map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn sentry_stop() -> Result<(), String> {
+    sentry_client::request_stop().map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn sentry_list_events(limit: usize) -> Vec<AlertEvent> {
+    sentry_client::list_recent_events(limit.max(1).min(500))
+}
+
+#[tauri::command]
+pub fn sentry_get_whitelist() -> WhitelistFile {
+    sentry_client::read_user_whitelist()
+}
+
+#[tauri::command]
+pub fn sentry_whitelist_add(image_name: String, reason: Option<String>) -> Result<WhitelistFile, String> {
+    sentry_client::whitelist_add(image_name, reason).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn sentry_whitelist_remove(image_name: String) -> Result<WhitelistFile, String> {
+    sentry_client::whitelist_remove(image_name).map_err(|e| format!("{e:#}"))
 }
 
 // ============ AI ============

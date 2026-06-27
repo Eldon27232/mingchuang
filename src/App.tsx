@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AiPanel } from "./AiPanel";
 import { GovernPanel } from "./GovernPanel";
+import { SentryPanel } from "./SentryPanel";
 
 interface ElevationStatus {
   is_elevated: boolean;
@@ -11,6 +12,7 @@ interface ElevationStatus {
 export default function App() {
   const [elev, setElev] = useState<ElevationStatus | null>(null);
   const [showAi, setShowAi] = useState(false);
+  const [showSentry, setShowSentry] = useState(false);
   const [relaunching, setRelaunching] = useState(false);
 
   useEffect(() => {
@@ -49,6 +51,9 @@ export default function App() {
       <div className="topbar">
         <div className="topbar-left">明窗 <span className="muted small">让 Windows 重新明亮</span></div>
         <div className="topbar-right">
+          <button className="icon-btn" onClick={() => setShowSentry(true)} title="后台守护">
+            🛡
+          </button>
           <button className="icon-btn" onClick={() => setShowAi(true)} title="问问 AI">
             💬
           </button>
@@ -57,12 +62,19 @@ export default function App() {
 
       <GovernPanel />
 
+      {showSentry && (
+        <div className="ai-drawer-backdrop" onClick={() => setShowSentry(false)}>
+          <div className="ai-drawer" onClick={(e) => e.stopPropagation()}>
+            <button className="drawer-close" onClick={() => setShowSentry(false)}>✕</button>
+            <SentryPanel />
+          </div>
+        </div>
+      )}
+
       {showAi && (
         <div className="ai-drawer-backdrop" onClick={() => setShowAi(false)}>
           <div className="ai-drawer" onClick={(e) => e.stopPropagation()}>
-            <button className="drawer-close" onClick={() => setShowAi(false)}>
-              ✕
-            </button>
+            <button className="drawer-close" onClick={() => setShowAi(false)}>✕</button>
             <AiPanel />
           </div>
         </div>

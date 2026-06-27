@@ -6,6 +6,7 @@ mod fileassoc;
 mod govern;
 mod inventory;
 mod profile;
+mod sentry_client;
 mod snapshot;
 mod sys_cmd;
 mod whitelist;
@@ -50,6 +51,18 @@ pub fn run() {
             commands::ai_abort_session,
             commands::ai_retry_last,
             commands::ai_edit_user_message,
+            // Sentry 后台监控
+            commands::sentry_get_status,
+            commands::sentry_enable_autostart,
+            commands::sentry_disable_autostart,
+            commands::sentry_start_now,
+            commands::sentry_pause,
+            commands::sentry_resume,
+            commands::sentry_stop,
+            commands::sentry_list_events,
+            commands::sentry_get_whitelist,
+            commands::sentry_whitelist_add,
+            commands::sentry_whitelist_remove,
         ])
         .run(tauri::generate_context!())
         .expect("error while running kuake-fuckyou");

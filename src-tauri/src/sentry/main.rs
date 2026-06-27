@@ -23,6 +23,7 @@ mod events;
 mod network;
 mod notify;
 mod process_filter;
+mod state_io;
 mod whitelist;
 
 use std::collections::HashMap;
@@ -44,6 +45,11 @@ struct ProcessUploadState {
 
 fn main() {
     eprintln!("[sentry] 启动中...");
+
+    // 启动时记录, 用于 state
+    let started_at = chrono::Utc::now();
+    let mut alerts_total: u64 = 0;
+    let mut last_alert_at: Option<chrono::DateTime<chrono::Utc>> = None;
 
     // 命令行参数: --register-autostart / --unregister-autostart
     let args: Vec<String> = std::env::args().collect();
@@ -76,6 +82,30 @@ fn main() {
     eprintln!("[sentry] 进入监控循环, 采样间隔 {}s, 阈值 {} bps", SAMPLE_INTERVAL.as_secs(), ALERT_THRESHOLD_BPS);
 
     loop {
+        // 检查 GUI 控制文件: 暂停/停止
+        let control = state_io::read_control();
+        if control.stop_requested {
+            eprintln!("[sentry] 收到停止指令, 退出");
+            return;
+        }
+        let now_utc = chrono::Utc::now();
+        let paused = control.paused_until.map(|t| t > now_utc).unwrap_or(false);
+
+        // 周期性写状态
+        let _ = state_io::write_state(&state_io::SentryState {
+            started_at,
+            updated_at: now_utc,
+            last_alert_at,
+            paused_until: control.paused_until,
+            alerts_total,
+            monitored_pids: states.len(),
+        });
+
+        if paused {
+            std::thread::sleep(SAMPLE_INTERVAL);
+            continue;
+        }
+
         let now = Instant::now();
         match network::sample_per_pid_bytes_out() {
             Ok(snapshot) => {
@@ -119,6 +149,8 @@ fn main() {
                                 {
                                     trigger_alert(state, rate);
                                     state.last_alert_at = Some(now);
+                                    alerts_total += 1;
+                                    last_alert_at = Some(chrono::Utc::now());
                                 }
                             }
                         }
