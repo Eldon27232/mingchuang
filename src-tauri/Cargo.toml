@@ -11,6 +11,11 @@ default-run = "kuake-fuckyou"
 name = "kuake_fuckyou_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# 后台监控守护 binary (8 Mbps 上行报警, 独立进程)
+[[bin]]
+name = "mingchuang-sentry"
+path = "src/sentry/main.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 embed-manifest = "1"
@@ -33,11 +38,15 @@ windows = { version = "0.59", features = [
     "Win32_System_Threading",
     "Win32_System_Com",
     "Win32_System_Variant",
+    "Win32_System_ProcessStatus",
     "Win32_Storage_FileSystem",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
 ] }
+notify-rust = "4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["sync", "macros"] }
 include_dir = "0.7"
