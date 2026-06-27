@@ -39,6 +39,7 @@ pub fn run() {
             commands::fileassoc_upsert_app,
             commands::fileassoc_remove_app,
             commands::fileassoc_apply_all,
+            commands::fileassoc_open_settings,
             // AI
             commands::ai_get_config,
             commands::ai_set_config,

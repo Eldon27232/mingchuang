@@ -1,18 +1,22 @@
-//! 检测本机已安装的"开放型"应用 — 用户挑已装软件设默认打开方式,不用手输路径
+//! 检测本机已安装的"开放型"应用
 //!
-//! 白名单 + 扫描:
-//!  - 一份"开放型软件"清单(我们推荐的可信替代,不是国产流氓)
-//!  - 每个软件给 candidate 路径列表,逐个 Test-Path
-//!  - 命中即返回
+//! 三路并:
+//!  1. 内置白名单候选(15 个,扫安装目录)— 推荐工具
+//!  2. 扫开始菜单 .lnk(用户实际装的所有应用)— 用 IShellLinkW COM 解析 target
+//!  3. 扫 HKLM/HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths(系统注册过的可执行)
+//!
+//! 过滤掉系统目录里的 .exe(svchost 等)和明显非用户应用的。
 
+use anyhow::Result;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct InstalledApp {
     pub key: String,
     pub display_name: String,
-    pub category: String,    // music / video / archive / image / doc / browser
+    pub category: String,
     pub exe_path: String,
 }
 
@@ -34,154 +38,261 @@ struct Candidate {
     paths: &'static [&'static str],
 }
 
+// 推荐的"开放型"工具(预设)
 const CANDIDATES: &[Candidate] = &[
-    // ===== 视频 =====
-    Candidate {
-        key: "potplayer",
-        display_name: "PotPlayer",
-        category: "video",
-        paths: &[
-            r"%PROGRAMFILES%\DAUM\PotPlayer\PotPlayerMini64.exe",
-            r"%PROGRAMFILES(x86)%\DAUM\PotPlayer\PotPlayerMini.exe",
-            r"%PROGRAMFILES%\PotPlayer\PotPlayerMini64.exe",
-        ],
-    },
-    Candidate {
-        key: "mpc-hc",
-        display_name: "MPC-HC",
-        category: "video",
-        paths: &[
-            r"%PROGRAMFILES%\MPC-HC\mpc-hc64.exe",
-            r"%PROGRAMFILES(x86)%\MPC-HC\mpc-hc.exe",
-        ],
-    },
-    Candidate {
-        key: "vlc",
-        display_name: "VLC",
-        category: "video",
-        paths: &[
-            r"%PROGRAMFILES%\VideoLAN\VLC\vlc.exe",
-            r"%PROGRAMFILES(x86)%\VideoLAN\VLC\vlc.exe",
-        ],
-    },
-    Candidate {
-        key: "mpv",
-        display_name: "mpv",
-        category: "video",
-        paths: &[r"%PROGRAMFILES%\mpv\mpv.exe", r"%LOCALAPPDATA%\mpv\mpv.exe"],
-    },
-    // ===== 音乐 =====
-    Candidate {
-        key: "foobar2000",
-        display_name: "foobar2000",
-        category: "music",
-        paths: &[
-            r"%PROGRAMFILES%\foobar2000\foobar2000.exe",
-            r"%PROGRAMFILES(x86)%\foobar2000\foobar2000.exe",
-        ],
-    },
-    Candidate {
-        key: "aimp",
-        display_name: "AIMP",
-        category: "music",
-        paths: &[
-            r"%PROGRAMFILES(x86)%\AIMP\AIMP.exe",
-            r"%PROGRAMFILES%\AIMP\AIMP.exe",
-        ],
-    },
-    // ===== 压缩 =====
-    Candidate {
-        key: "7zip",
-        display_name: "7-Zip",
-        category: "archive",
-        paths: &[
-            r"%PROGRAMFILES%\7-Zip\7zFM.exe",
-            r"%PROGRAMFILES(x86)%\7-Zip\7zFM.exe",
-        ],
-    },
-    Candidate {
-        key: "bandizip",
-        display_name: "Bandizip",
-        category: "archive",
-        paths: &[
-            r"%PROGRAMFILES%\Bandizip\Bandizip.exe",
-            r"%PROGRAMFILES(x86)%\Bandizip\Bandizip.exe",
-        ],
-    },
-    Candidate {
-        key: "winrar",
-        display_name: "WinRAR",
-        category: "archive",
-        paths: &[
-            r"%PROGRAMFILES%\WinRAR\WinRAR.exe",
-            r"%PROGRAMFILES(x86)%\WinRAR\WinRAR.exe",
-        ],
-    },
-    // ===== 图片 =====
-    Candidate {
-        key: "honeyview",
-        display_name: "Honeyview",
-        category: "image",
-        paths: &[
-            r"%PROGRAMFILES%\Honeyview\Honeyview.exe",
-            r"%PROGRAMFILES(x86)%\Honeyview\Honeyview.exe",
-        ],
-    },
-    Candidate {
-        key: "imageglass",
-        display_name: "ImageGlass",
-        category: "image",
-        paths: &[
-            r"%PROGRAMFILES%\ImageGlass\ImageGlass.exe",
-            r"%PROGRAMFILES(x86)%\ImageGlass\ImageGlass.exe",
-        ],
-    },
-    Candidate {
-        key: "irfanview",
-        display_name: "IrfanView",
-        category: "image",
-        paths: &[
-            r"%PROGRAMFILES%\IrfanView\i_view64.exe",
-            r"%PROGRAMFILES(x86)%\IrfanView\i_view32.exe",
-        ],
-    },
-    // ===== 文档 =====
-    Candidate {
-        key: "sumatrapdf",
-        display_name: "Sumatra PDF",
-        category: "doc",
-        paths: &[
-            r"%PROGRAMFILES%\SumatraPDF\SumatraPDF.exe",
-            r"%LOCALAPPDATA%\SumatraPDF\SumatraPDF.exe",
-        ],
-    },
-    Candidate {
-        key: "notepad++",
-        display_name: "Notepad++",
-        category: "doc",
-        paths: &[
-            r"%PROGRAMFILES%\Notepad++\notepad++.exe",
-            r"%PROGRAMFILES(x86)%\Notepad++\notepad++.exe",
-        ],
-    },
+    Candidate { key: "potplayer", display_name: "PotPlayer", category: "video", paths: &[
+        r"%PROGRAMFILES%\DAUM\PotPlayer\PotPlayerMini64.exe",
+        r"%PROGRAMFILES(x86)%\DAUM\PotPlayer\PotPlayerMini.exe",
+        r"%PROGRAMFILES%\PotPlayer\PotPlayerMini64.exe",
+        r"%PROGRAMFILES(x86)%\PotPlayer\PotPlayerMini.exe",
+        // 完美解码 / 完美者(打包了 PotPlayer)
+        r"%PROGRAMFILES%\Wanos\PotPlayer\PotPlayerMini64.exe",
+        r"%PROGRAMFILES(x86)%\Wanos\PotPlayer\PotPlayerMini.exe",
+        r"%PROGRAMFILES%\KMPlayer\PotPlayerMini64.exe",
+        r"D:\Program Files\DAUM\PotPlayer\PotPlayerMini64.exe",
+        r"D:\PotPlayer\PotPlayerMini64.exe",
+    ]},
+    Candidate { key: "mpc-hc", display_name: "MPC-HC", category: "video", paths: &[
+        r"%PROGRAMFILES%\MPC-HC\mpc-hc64.exe",
+        r"%PROGRAMFILES(x86)%\MPC-HC\mpc-hc.exe",
+        r"%PROGRAMFILES%\K-Lite Codec Pack\MPC-HC64\mpc-hc64.exe",
+    ]},
+    Candidate { key: "vlc", display_name: "VLC", category: "video", paths: &[
+        r"%PROGRAMFILES%\VideoLAN\VLC\vlc.exe",
+        r"%PROGRAMFILES(x86)%\VideoLAN\VLC\vlc.exe",
+    ]},
+    Candidate { key: "mpv", display_name: "mpv", category: "video", paths: &[
+        r"%PROGRAMFILES%\mpv\mpv.exe", r"%LOCALAPPDATA%\mpv\mpv.exe",
+    ]},
+    Candidate { key: "foobar2000", display_name: "foobar2000", category: "music", paths: &[
+        r"%PROGRAMFILES%\foobar2000\foobar2000.exe",
+        r"%PROGRAMFILES(x86)%\foobar2000\foobar2000.exe",
+    ]},
+    Candidate { key: "aimp", display_name: "AIMP", category: "music", paths: &[
+        r"%PROGRAMFILES(x86)%\AIMP\AIMP.exe", r"%PROGRAMFILES%\AIMP\AIMP.exe",
+    ]},
+    Candidate { key: "7zip", display_name: "7-Zip", category: "archive", paths: &[
+        r"%PROGRAMFILES%\7-Zip\7zFM.exe", r"%PROGRAMFILES(x86)%\7-Zip\7zFM.exe",
+    ]},
+    Candidate { key: "bandizip", display_name: "Bandizip", category: "archive", paths: &[
+        r"%PROGRAMFILES%\Bandizip\Bandizip.exe", r"%PROGRAMFILES(x86)%\Bandizip\Bandizip.exe",
+    ]},
+    Candidate { key: "winrar", display_name: "WinRAR", category: "archive", paths: &[
+        r"%PROGRAMFILES%\WinRAR\WinRAR.exe", r"%PROGRAMFILES(x86)%\WinRAR\WinRAR.exe",
+    ]},
+    Candidate { key: "honeyview", display_name: "Honeyview", category: "image", paths: &[
+        r"%PROGRAMFILES%\Honeyview\Honeyview.exe", r"%PROGRAMFILES(x86)%\Honeyview\Honeyview.exe",
+    ]},
+    Candidate { key: "imageglass", display_name: "ImageGlass", category: "image", paths: &[
+        r"%PROGRAMFILES%\ImageGlass\ImageGlass.exe", r"%PROGRAMFILES(x86)%\ImageGlass\ImageGlass.exe",
+    ]},
+    Candidate { key: "irfanview", display_name: "IrfanView", category: "image", paths: &[
+        r"%PROGRAMFILES%\IrfanView\i_view64.exe", r"%PROGRAMFILES(x86)%\IrfanView\i_view32.exe",
+    ]},
+    Candidate { key: "sumatrapdf", display_name: "Sumatra PDF", category: "doc", paths: &[
+        r"%PROGRAMFILES%\SumatraPDF\SumatraPDF.exe", r"%LOCALAPPDATA%\SumatraPDF\SumatraPDF.exe",
+    ]},
+    Candidate { key: "notepad++", display_name: "Notepad++", category: "doc", paths: &[
+        r"%PROGRAMFILES%\Notepad++\notepad++.exe", r"%PROGRAMFILES(x86)%\Notepad++\notepad++.exe",
+    ]},
 ];
 
 pub fn detect_installed() -> Vec<InstalledApp> {
-    let mut out = Vec::new();
+    let mut out: Vec<InstalledApp> = Vec::new();
+    let mut seen_paths: HashMap<String, bool> = HashMap::new();
+
+    // 1. 内置推荐候选
     for c in CANDIDATES {
         for p in c.paths {
             if let Some(path) = expand(p) {
                 if path.is_file() {
-                    out.push(InstalledApp {
-                        key: c.key.to_string(),
-                        display_name: c.display_name.to_string(),
-                        category: c.category.to_string(),
-                        exe_path: path.display().to_string(),
-                    });
+                    let key_path = path.display().to_string().to_ascii_lowercase();
+                    if seen_paths.insert(key_path, true).is_none() {
+                        out.push(InstalledApp {
+                            key: c.key.to_string(),
+                            display_name: c.display_name.to_string(),
+                            category: c.category.to_string(),
+                            exe_path: path.display().to_string(),
+                        });
+                    }
                     break;
                 }
             }
         }
     }
+
+    // 2. 扫开始菜单 .lnk
+    if let Ok(apps) = scan_start_menu_apps() {
+        for app in apps {
+            let key_path = app.exe_path.to_ascii_lowercase();
+            if seen_paths.insert(key_path, true).is_none() {
+                out.push(app);
+            }
+        }
+    }
+
+    out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
     out
+}
+
+fn start_menu_dirs() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(a) = std::env::var("APPDATA") {
+        out.push(PathBuf::from(&a).join(r"Microsoft\Windows\Start Menu\Programs"));
+    }
+    if let Ok(pd) = std::env::var("ProgramData") {
+        out.push(PathBuf::from(&pd).join(r"Microsoft\Windows\Start Menu\Programs"));
+    }
+    out
+}
+
+/// 扫开始菜单 .lnk → 提取 target exe → 包装成 InstalledApp
+fn scan_start_menu_apps() -> Result<Vec<InstalledApp>> {
+    use windows::core::{Interface, PCWSTR, PWSTR};
+    use windows::Win32::Storage::FileSystem::WIN32_FIND_DATAW;
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
+        COINIT_MULTITHREADED, STGM_READ,
+    };
+    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink, SLGP_RAWPATH};
+
+    let mut out = Vec::new();
+
+    unsafe {
+        let hr = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let did_init = hr.is_ok();
+
+        for dir in start_menu_dirs() {
+            if !dir.is_dir() {
+                continue;
+            }
+            for entry in walk_lnk_files(&dir) {
+                let path_str = entry.display().to_string();
+                let lnk_w: Vec<u16> = path_str
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
+
+                let Ok(shell_link) =
+                    CoCreateInstance::<_, IShellLinkW>(&ShellLink, None, CLSCTX_INPROC_SERVER)
+                else {
+                    continue;
+                };
+                let Ok(persist) = Interface::cast::<IPersistFile>(&shell_link) else {
+                    continue;
+                };
+                if persist.Load(PCWSTR(lnk_w.as_ptr()), STGM_READ).is_err() {
+                    continue;
+                }
+
+                let mut buf = vec![0u16; 2048];
+                let mut wfd = WIN32_FIND_DATAW::default();
+                if shell_link
+                    .GetPath(&mut buf, &mut wfd, SLGP_RAWPATH.0 as u32)
+                    .is_err()
+                {
+                    continue;
+                }
+                let _ = PWSTR(buf.as_mut_ptr());
+                let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+                let target = String::from_utf16_lossy(&buf[..len]);
+
+                if target.is_empty() {
+                    continue;
+                }
+                if !target.to_ascii_lowercase().ends_with(".exe") {
+                    continue;
+                }
+                // 排除系统目录的 exe
+                let lt = target.to_ascii_lowercase();
+                if lt.starts_with("c:\\windows\\system32\\")
+                    || lt.starts_with("c:\\windows\\syswow64\\")
+                    || lt.starts_with("c:\\windows\\winsxs\\")
+                {
+                    continue;
+                }
+                if !std::path::Path::new(&target).is_file() {
+                    continue;
+                }
+
+                let display_name = entry
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(String::from)
+                    .unwrap_or_else(|| "Unknown".into());
+                let category = guess_category(&display_name, &target);
+
+                let key = format!(
+                    "lnk:{}",
+                    target.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>()
+                );
+                out.push(InstalledApp {
+                    key,
+                    display_name,
+                    category,
+                    exe_path: target,
+                });
+            }
+        }
+
+        if did_init {
+            CoUninitialize();
+        }
+    }
+
+    Ok(out)
+}
+
+fn walk_lnk_files(dir: &PathBuf) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    walk_lnk_inner(dir, &mut out, 0);
+    out
+}
+
+fn walk_lnk_inner(dir: &PathBuf, out: &mut Vec<PathBuf>, depth: u32) {
+    if depth > 4 { return; }
+    let Ok(entries) = std::fs::read_dir(dir) else { return; };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if let Ok(ty) = entry.file_type() {
+            if ty.is_dir() {
+                walk_lnk_inner(&path, out, depth + 1);
+            } else if path.extension().and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("lnk")).unwrap_or(false)
+            {
+                out.push(path);
+            }
+        }
+    }
+}
+
+fn guess_category(name: &str, path: &str) -> String {
+    let n = name.to_ascii_lowercase();
+    let p = path.to_ascii_lowercase();
+    if n.contains("player") || n.contains("video") || n.contains("vlc") || n.contains("mpc")
+        || n.contains("potplayer") || n.contains("kmplayer") || n.contains("视频") || n.contains("影音")
+    {
+        return "video".into();
+    }
+    if n.contains("music") || n.contains("audio") || n.contains("foobar") || n.contains("aimp")
+        || n.contains("音乐")
+    {
+        return "music".into();
+    }
+    if n.contains("zip") || n.contains("rar") || n.contains("7z") || n.contains("bandi")
+        || n.contains("压缩")
+    {
+        return "archive".into();
+    }
+    if n.contains("image") || n.contains("photo") || n.contains("honey") || n.contains("imageglass")
+        || n.contains("irfan") || n.contains("图片")
+    {
+        return "image".into();
+    }
+    if n.contains("pdf") || n.contains("reader") || n.contains("notepad") || n.contains("文档")
+        || p.contains("\\office") || n.contains("word") || n.contains("typora") || n.contains("vscode")
+    {
+        return "doc".into();
+    }
+    "custom".into()
 }

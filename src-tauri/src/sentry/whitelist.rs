@@ -1,6 +1,15 @@
 //! 白名单 - 内置 + 用户
 //!
-//! 存放: %LOCALAPPDATA%\mingchuang\sentry\{builtin.json, user.json}
+//! **关键设计变更 (2026-06-27 修正)**: 之前内置了 60+ 项浏览器/网盘/通讯/同步盘
+//! 都白名单, 但用户指出: 浏览器和网盘正是 PCDN 重灾区, 它们后台静默偷传才该报警,
+//! 把它们无条件加白等于反逻辑。
+//!
+//! 新策略:
+//!  - 内置白名单**只保留真系统进程 + 明窗自己** (没法误报且不可能 PCDN)
+//!  - 浏览器/网盘/IDE/游戏平台/QQ 等**全部移出**, 走前台/可见性判定
+//!  - 用户在用 (前台或可见窗口) = 不报警, 没窗口偷传 = 报警
+//!
+//! 用户可在 GUI 白名单页里手动加自己信任的进程。
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -27,7 +36,6 @@ pub struct WhitelistEntry {
 }
 
 pub struct MergedWhitelist {
-    /// 所有 image_name 的小写形式
     pub image_names: HashSet<String>,
 }
 
@@ -38,52 +46,27 @@ pub fn sentry_dir() -> PathBuf {
     local.join("mingchuang").join("sentry")
 }
 
-/// 内置白名单 (硬编码,随版本带,首发覆盖)
+/// 内置白名单 — **只留真系统进程 + 明窗自己**, 浏览器/网盘/通讯全砍
 fn builtin_image_names() -> Vec<&'static str> {
     vec![
-        // 浏览器
-        "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "vivaldi.exe", "iexplore.exe",
-        // IDE / 编辑器
-        "Code.exe", "code.exe", "devenv.exe", "idea64.exe", "pycharm64.exe", "goland64.exe",
-        "clion64.exe", "rider64.exe", "webstorm64.exe", "Cursor.exe",
-        "sublime_text.exe", "notepad++.exe",
-        // 终端
-        "WindowsTerminal.exe", "wsl.exe", "wslhost.exe", "wslservice.exe", "powershell.exe", "pwsh.exe",
-        "OpenConsole.exe", "cmd.exe", "ssh.exe", "git.exe", "bash.exe",
-        // 游戏平台
-        "steam.exe", "steamwebhelper.exe", "steamservice.exe",
-        "EpicGamesLauncher.exe", "EpicWebHelper.exe",
-        "Battle.net.exe", "Agent.exe",
-        "UbisoftConnect.exe", "upc.exe",
-        "EA Desktop.exe", "EALauncher.exe",
-        "RiotClientServices.exe",
-        // 通讯
-        "Discord.exe", "Slack.exe", "Telegram.exe", "Element.exe",
-        "WeChat.exe", "WeChatAppEx.exe", "QQ.exe", "QQEX.exe", "TIM.exe", "dingtalk.exe",
-        "feishu.exe", "lark.exe", "KOOK.exe", "Wemeet.exe", "wemeetapp.exe",
-        // 同步盘
-        "OneDrive.exe", "Dropbox.exe", "GoogleDriveFS.exe", "GoogleDrive.exe",
-        // 系统/微软
-        "MsMpEng.exe", "SearchHost.exe", "SearchIndexer.exe", "SearchApp.exe",
-        "MoUsoCoreWorker.exe", "TiWorker.exe", "TrustedInstaller.exe", "wuauclt.exe",
+        // Windows Defender 实时扫描 (流量大但合法)
+        "MsMpEng.exe", "NisSrv.exe",
+        // Windows Update 系列 (合法且必要)
+        "MoUsoCoreWorker.exe", "TiWorker.exe", "TrustedInstaller.exe",
+        "wuauclt.exe", "WindowsUpdateBox.exe",
+        // Delivery Optimization (Microsoft P2P 更新, 系统级)
         "DeliveryOptimization.exe", "BackgroundTransferHost.exe",
-        "WindowsUpdateBox.exe", "SecurityHealthService.exe",
-        // 显卡 / 硬件厂商
-        "NVDisplay.Container.exe", "nvcontainer.exe", "nvsphelper64.exe",
-        "RadeonSoftware.exe", "AMDRSSrcExt.exe", "atieclxx.exe", "atiesrxx.exe",
-        // 媒体
-        "Spotify.exe", "AppleMusic.exe", "cloudmusic.exe", "cloudmusic_reporter.exe",
-        // 会议
-        "Zoom.exe", "ZoomLauncher.exe", "Teams.exe", "ms-teams.exe",
-        // 火绒 / 安全(用户已表态)
-        "HipsDaemon.exe", "HipsMain.exe", "HipsTray.exe",
-        // FlClash 代理
-        "FlClash.exe", "FlClashCore.exe", "FlClashHelperService.exe",
-        // 我们自己
-        "kuake-fuckyou.exe", "mingchuang-sentry.exe",
-        // 网盘(归"限速但不杀")
-        "BaiduNetdisk.exe", "BaiduNetdiskUtility.exe",
-        "123pan.exe", "MaintenanceService.exe", "UpgradeService.exe",
+        // 系统搜索本地索引 (不联网, 但万一)
+        "SearchHost.exe", "SearchIndexer.exe", "SearchApp.exe",
+        // SmartScreen / 安全
+        "SecurityHealthService.exe", "SecurityHealthSystray.exe", "smartscreen.exe",
+        // Microsoft Store / 后台传输
+        "MicrosoftEdgeUpdate.exe",
+        // 明窗自己
+        "kuake-fuckyou.exe", "mingchuang-sentry.exe", "明窗.exe",
+        // svchost (太大,但杀了系统就挂)
+        "svchost.exe", "csrss.exe", "lsass.exe", "wininit.exe", "services.exe",
+        "smss.exe", "winlogon.exe", "dwm.exe", "fontdrvhost.exe",
     ]
 }
 
@@ -93,7 +76,6 @@ pub fn load_merged() -> MergedWhitelist {
         .map(|s| s.to_ascii_lowercase())
         .collect();
 
-    // 用户白名单(若存在)
     let user_path = sentry_dir().join("user.json");
     if let Ok(txt) = std::fs::read_to_string(&user_path) {
         if let Ok(f) = serde_json::from_str::<WhitelistFile>(&txt) {

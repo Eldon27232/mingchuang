@@ -133,6 +133,24 @@ pub fn fileassoc_apply_all() -> Result<ApplyAllResult, String> {
     assoc_manifest::apply_all().map_err(|e| format!("{e:#}"))
 }
 
+/// 打开 Windows 默认应用设置页 — 用户在那里真正完成 default 绑定
+/// Win10/11 的关联锁定靠 UserChoice 哈希, 没法 100% 自动写, 老老实实让用户最后一步手动确认
+#[tauri::command]
+pub fn fileassoc_open_settings(ext: Option<String>) -> Result<(), String> {
+    let url = match ext {
+        Some(e) if !e.is_empty() => {
+            let e = if e.starts_with('.') { e } else { format!(".{e}") };
+            format!("ms-settings:defaultapps?registeredAppUser={e}")
+        }
+        _ => "ms-settings:defaultapps".into(),
+    };
+    crate::sys_cmd::cmd("cmd")
+        .args(["/C", "start", "", &url])
+        .spawn()
+        .map_err(|e| format!("打开系统设置失败: {e}"))?;
+    Ok(())
+}
+
 // ============ Sentry (后台网络监控) ============
 
 #[tauri::command]

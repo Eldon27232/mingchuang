@@ -406,6 +406,9 @@ function EditAssocModal({ app, initialExtensions, presets, manifest, onCancel, o
     }
   }
 
+  const [showVerify, setShowVerify] = useState(false);
+  const [verifyExts, setVerifyExts] = useState<string[]>([]);
+
   const save = async () => {
     setBusy(true);
     const extsArr = Array.from(selected);
@@ -424,9 +427,10 @@ function EditAssocModal({ app, initialExtensions, presets, manifest, onCancel, o
           extensions: extsArr,
         },
       });
-      // 立即应用
       await invoke("fileassoc_apply_all");
-      onSaved();
+      // Win10/11 不直接写 UserChoice 哈希就改不掉默认, 弹"验证"步骤
+      setVerifyExts(extsArr);
+      setShowVerify(true);
     } catch (e) {
       alert(`保存失败: ${e}`);
     } finally {
@@ -446,6 +450,43 @@ function EditAssocModal({ app, initialExtensions, presets, manifest, onCancel, o
       setBusy(false);
     }
   };
+
+  if (showVerify) {
+    return (
+      <div className="modal-backdrop" onClick={onSaved}>
+        <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <h3>差最后一步</h3>
+          <p>
+            ✓ 已经把 <strong>{app.display_name}</strong> 加进 Windows 的"打开方式"选项里了({verifyExts.length} 种文件类型)。
+          </p>
+          <p className="muted small">
+            <strong>但 Win11 限制太严</strong>:必须在系统设置里手动确认一次,我们没法 100% 自动绑定。
+            <br />我把系统的默认应用页打开,你做这两步:
+          </p>
+          <ol className="muted small">
+            <li>左边搜索你想改的文件类型(比如 <code>.mp4</code>)</li>
+            <li>右边点当前应用,选 <strong>{app.display_name}</strong></li>
+          </ol>
+          <div className="modal-buttons">
+            <button onClick={onSaved}>稍后</button>
+            <button
+              className="btn-exec"
+              onClick={async () => {
+                try {
+                  await invoke("fileassoc_open_settings", { ext: verifyExts[0]?.slice(1) ?? null });
+                } catch (e) {
+                  alert(`打开失败: ${e}`);
+                }
+                onSaved();
+              }}
+            >
+              打开 Windows 默认应用设置
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="modal-backdrop" onClick={onCancel}>
