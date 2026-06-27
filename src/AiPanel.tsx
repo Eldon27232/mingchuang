@@ -330,6 +330,21 @@ function PendingApproval({ call, onDecide }: { call: ToolCallView; onDecide: (d:
   );
 }
 
+const PROVIDER_PRESETS: Record<string, { base_url: string; model_executor: string; model_reviewer: string; key_link: string }> = {
+  anthropic: {
+    base_url: "https://api.anthropic.com",
+    model_executor: "claude-sonnet-4-6",
+    model_reviewer: "claude-haiku-4-5-20251001",
+    key_link: "https://console.anthropic.com/",
+  },
+  openai: {
+    base_url: "https://api.openai.com",
+    model_executor: "gpt-4o",
+    model_reviewer: "gpt-4o-mini",
+    key_link: "https://platform.openai.com/api-keys",
+  },
+};
+
 function SettingsModal({
   initial, onClose, onSaved,
 }: {
@@ -342,7 +357,27 @@ function SettingsModal({
   const set = <K extends keyof AiConfig>(k: K, v: AiConfig[K]) =>
     setDraft((d) => ({ ...d, [k]: v }));
 
+  const onProviderChange = (p: string) => {
+    const preset = PROVIDER_PRESETS[p];
+    setDraft((d) => ({
+      ...d,
+      provider: p,
+      // 选预设时把 URL/模型默认填上(用户可以再改)
+      base_url: preset?.base_url || d.base_url,
+      model_executor: preset?.model_executor || d.model_executor,
+      model_reviewer: preset?.model_reviewer || d.model_reviewer,
+    }));
+  };
+
+  const isValid =
+    !!draft.provider.trim() &&
+    !!draft.api_key.trim() &&
+    !!draft.base_url.trim() &&
+    !!draft.model_executor.trim() &&
+    !!draft.model_reviewer.trim();
+
   const save = async () => {
+    if (!isValid) return;
     setSaving(true);
     try {
       await invoke("ai_set_config", { cfg: draft });
@@ -355,52 +390,57 @@ function SettingsModal({
     }
   };
 
+  const keyLink = PROVIDER_PRESETS[draft.provider]?.key_link;
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>AI 设置</h3>
+        <small className="muted">下面所有都是必填项。</small>
 
-        <label>🔑 API 密钥</label>
+        <label>服务商 *</label>
+        <select value={draft.provider} onChange={(e) => onProviderChange(e.target.value)} className="provider-select">
+          <option value="anthropic">Anthropic (Claude)</option>
+          <option value="openai">OpenAI / 兼容 (DeepSeek / Kimi / 智谱 / Ollama 等)</option>
+        </select>
+
+        <label>API 密钥 *</label>
         <input
           type="password"
           value={draft.api_key}
           onChange={(e) => set("api_key", e.target.value)}
-          placeholder="sk-ant-... 或 sk-..."
+          placeholder={draft.provider === "anthropic" ? "sk-ant-..." : "sk-..."}
         />
-        <small className="muted">
-          没有的话:{" "}
-          <a href="https://console.anthropic.com/" target="_blank" rel="noreferrer">claude.ai</a>{" "}
-          注册并创建 key, 或填其他兼容服务的 key (DeepSeek/Kimi 等)。
-        </small>
+        {keyLink && (
+          <small className="muted">
+            没有的话:{" "}
+            <a href={keyLink} target="_blank" rel="noreferrer">点这里去注册</a>
+          </small>
+        )}
 
-        <details>
-          <summary>🛠 高级设置(给开发者)</summary>
+        <label>Base URL *</label>
+        <input value={draft.base_url} onChange={(e) => set("base_url", e.target.value)} />
 
-          <label>服务商 (anthropic 或 openai)</label>
-          <input value={draft.provider} onChange={(e) => set("provider", e.target.value)} />
+        <label>主模型 *(Executor — 处理思考和工具调用)</label>
+        <input value={draft.model_executor} onChange={(e) => set("model_executor", e.target.value)} />
 
-          <label>Base URL</label>
-          <input value={draft.base_url} onChange={(e) => set("base_url", e.target.value)} />
+        <label>审查模型 *(Reviewer — 小模型,审查危险动作)</label>
+        <input value={draft.model_reviewer} onChange={(e) => set("model_reviewer", e.target.value)} />
 
-          <label>Executor 模型</label>
-          <input value={draft.model_executor} onChange={(e) => set("model_executor", e.target.value)} />
-
-          <label>Reviewer 模型(小模型, 审查危险动作)</label>
-          <input value={draft.model_reviewer} onChange={(e) => set("model_reviewer", e.target.value)} />
-
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={draft.auto_approve_all}
-              onChange={(e) => set("auto_approve_all", e.target.checked)}
-            />
-            安全的破坏性动作自动放行
-          </label>
-        </details>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={draft.auto_approve_all}
+            onChange={(e) => set("auto_approve_all", e.target.checked)}
+          />
+          Reviewer 判 safe 时自动放行(否则破坏性动作都要你点确认)
+        </label>
 
         <div className="modal-buttons">
           <button onClick={onClose}>取消</button>
-          <button className="btn-exec" onClick={save} disabled={saving}>{saving ? "..." : "保存"}</button>
+          <button className="btn-exec" onClick={save} disabled={saving || !isValid}>
+            {saving ? "..." : isValid ? "保存" : "请填完所有必填项"}
+          </button>
         </div>
       </div>
     </div>

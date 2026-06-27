@@ -3,6 +3,7 @@ use crate::ai::agent::{self, ApprovalDecision, Session};
 use crate::ai::config::{self as ai_config, AiConfig};
 use crate::elevation::{self, ElevationStatus};
 use crate::fileassoc::detect::InstalledApp;
+use crate::fileassoc::manifest::{self as assoc_manifest, AssocApp, AssocManifest, ApplyAllResult};
 use crate::fileassoc::{self, AssocPreset, AssocResult};
 use crate::govern::{self, ScenarioRunResult, ScenarioStats};
 use crate::inventory::namespace::{scan_pc_namespace_items, PcNamespaceItem};
@@ -109,6 +110,26 @@ pub fn fileassoc_set_app_defaults(
     extensions: Vec<String>,
 ) -> Result<AssocResult, String> {
     fileassoc::set_app_defaults(&exe_path, &extensions).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn fileassoc_get_manifest() -> AssocManifest {
+    assoc_manifest::load()
+}
+
+#[tauri::command]
+pub fn fileassoc_upsert_app(app: AssocApp) -> Result<AssocManifest, String> {
+    assoc_manifest::upsert_app(app).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn fileassoc_remove_app(key: String) -> Result<AssocManifest, String> {
+    assoc_manifest::remove_app(&key).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn fileassoc_apply_all() -> Result<ApplyAllResult, String> {
+    assoc_manifest::apply_all().map_err(|e| format!("{e:#}"))
 }
 
 // ============ AI ============

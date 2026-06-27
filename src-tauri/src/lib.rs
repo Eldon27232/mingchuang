@@ -34,6 +34,10 @@ pub fn run() {
             // 默认打开方式
             commands::fileassoc_list_presets,
             commands::fileassoc_set_app_defaults,
+            commands::fileassoc_get_manifest,
+            commands::fileassoc_upsert_app,
+            commands::fileassoc_remove_app,
+            commands::fileassoc_apply_all,
             // AI
             commands::ai_get_config,
             commands::ai_set_config,

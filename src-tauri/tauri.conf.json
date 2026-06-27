@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "kuake-fuckyou",
+  "productName": "明窗",
   "version": "0.0.1",
-  "identifier": "com.kuake.fuckyou",
+  "identifier": "com.mingchuang.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "kuake-fuckyou",
+        "title": "明窗 · 让 Windows 重新明亮",
         "width": 1180,
         "height": 760,
         "minWidth": 900,

@@ -10,6 +10,7 @@
 //! 本机实测 reg 写入完成后,首次打开此类文件 Windows 会弹"打开方式",选我们 ProgId 即生效。
 
 pub mod detect;
+pub mod manifest;
 pub mod presets;
 pub mod progid;
 

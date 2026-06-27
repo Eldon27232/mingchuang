@@ -34,7 +34,7 @@ export default function App() {
         <div className="uac-content">
           <div className="uac-icon">🛡️</div>
           <h1>需要管理员权限</h1>
-          <p>这个工具要改你电脑的系统设置,需要先以管理员身份打开。</p>
+          <p>明窗要改你电脑的系统设置,需要先以管理员身份打开。</p>
           <button className="uac-btn" onClick={relaunch} disabled={relaunching}>
             {relaunching ? "正在重启..." : "点这里,以管理员身份重启"}
           </button>
@@ -47,7 +47,7 @@ export default function App() {
   return (
     <div className="app">
       <div className="topbar">
-        <div className="topbar-left">kuake-fuckyou</div>
+        <div className="topbar-left">明窗 <span className="muted small">让 Windows 重新明亮</span></div>
         <div className="topbar-right">
           <button className="icon-btn" onClick={() => setShowAi(true)} title="问问 AI">
             💬
