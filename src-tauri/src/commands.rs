@@ -2,6 +2,7 @@ use crate::action::{self, ActionPlan, ExecResult};
 use crate::ai::agent::{self, ApprovalDecision, Session};
 use crate::ai::config::{self as ai_config, AiConfig};
 use crate::elevation::{self, ElevationStatus};
+use crate::fileassoc::detect::InstalledApp;
 use crate::fileassoc::{self, AssocPreset, AssocResult};
 use crate::govern::{self, ScenarioRunResult, ScenarioStats};
 use crate::inventory::namespace::{scan_pc_namespace_items, PcNamespaceItem};
@@ -11,6 +12,16 @@ use crate::snapshot::{self, SnapshotManifest};
 #[tauri::command]
 pub fn check_elevation() -> ElevationStatus {
     elevation::check_elevation()
+}
+
+#[tauri::command]
+pub fn relaunch_as_admin() -> Result<(), String> {
+    elevation::relaunch_as_admin()
+}
+
+#[tauri::command]
+pub fn fileassoc_detect_installed_apps() -> Vec<InstalledApp> {
+    fileassoc::detect::detect_installed()
 }
 
 #[tauri::command]

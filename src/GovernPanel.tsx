@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { humanizeAction } from "./labels";
 
 interface ScenarioStats {
   pending: number;
   summary: string;
+  display_names: string[];
 }
 interface ScenarioRunResult {
   attempted: number;
@@ -11,6 +13,12 @@ interface ScenarioRunResult {
   failed: number;
   snapshot_ids: string[];
   summary: string;
+}
+interface InstalledApp {
+  key: string;
+  display_name: string;
+  category: string;
+  exe_path: string;
 }
 interface AssocPreset {
   id: string;
@@ -34,163 +42,285 @@ interface SnapshotManifest {
   restorable?: boolean;
 }
 
+const CAT_ICON: Record<string, string> = {
+  video: "🎬", music: "🎵", archive: "📦", image: "🖼️", doc: "📄",
+};
+const PRESET_ICON: Record<string, string> = {
+  music: "🎵", video: "🎬", archive: "📦", image: "🖼️", doc: "📄",
+};
+
 export function GovernPanel() {
-  const [pcStats, setPcStats] = useState<ScenarioStats | null>(null);
-  const [kaStats, setKaStats] = useState<ScenarioStats | null>(null);
-  const [scStats, setScStats] = useState<ScenarioStats | null>(null);
+  const [pc, setPc] = useState<ScenarioStats | null>(null);
+  const [ka, setKa] = useState<ScenarioStats | null>(null);
+  const [sc, setSc] = useState<ScenarioStats | null>(null);
   const [snapshots, setSnapshots] = useState<SnapshotManifest[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
-  const [lastResult, setLastResult] = useState<string | null>(null);
+  const [recentBatch, setRecentBatch] = useState<{ summary: string; snapshotIds: string[] } | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showUndo, setShowUndo] = useState(false);
 
   const refresh = async () => {
     try {
-      const [pc, ka, sc, snaps] = await Promise.all([
+      const [_pc, _ka, _sc, _snaps] = await Promise.all([
         invoke<ScenarioStats>("govern_scan_pc_namespace"),
         invoke<ScenarioStats>("govern_scan_keepalive"),
         invoke<ScenarioStats>("govern_scan_shortcuts"),
         invoke<SnapshotManifest[]>("list_snapshots"),
       ]);
-      setPcStats(pc);
-      setKaStats(ka);
-      setScStats(sc);
-      setSnapshots(snaps);
+      setPc(_pc); setKa(_ka); setSc(_sc); setSnapshots(_snaps);
     } catch (e) {
-      setLastResult(`刷新失败: ${e}`);
+      alert(`扫描失败: ${e}`);
     }
   };
 
-  useEffect(() => {
-    refresh();
-  }, []);
+  useEffect(() => { refresh(); }, []);
 
-  const runScenario = async (cmd: string, name: string) => {
-    if (!confirm(`确认执行『${name}』? 所有动作会自动快照, 可一键还原。`)) return;
+  const totalPending = (pc?.pending || 0) + (ka?.pending || 0) + (sc?.pending || 0);
+  const allDisplayNames = [
+    ...(pc?.display_names || []),
+    ...(ka?.display_names || []),
+    ...(sc?.display_names || []),
+  ];
+  const uniqueDisplayNames = Array.from(new Set(allDisplayNames));
+
+  const oneClickAll = async () => {
+    if (totalPending === 0) return;
+    setBusy("oneclick");
+    try {
+      const collected: string[] = [];
+      const summaries: string[] = [];
+      if ((pc?.pending || 0) > 0) {
+        const r = await invoke<ScenarioRunResult>("govern_clean_pc_namespace");
+        collected.push(...r.snapshot_ids);
+        summaries.push(`清掉「我的电脑」${r.succeeded} 项`);
+      }
+      if ((ka?.pending || 0) > 0) {
+        const r = await invoke<ScenarioRunResult>("govern_stop_keepalive");
+        collected.push(...r.snapshot_ids);
+        summaries.push(`关掉后台 ${r.succeeded / 2 | 0} 个`);
+      }
+      if ((sc?.pending || 0) > 0) {
+        const r = await invoke<ScenarioRunResult>("govern_clean_shortcuts");
+        collected.push(...r.snapshot_ids);
+        summaries.push(`清了 ${r.succeeded} 个快捷方式`);
+      }
+      setRecentBatch({
+        summary: summaries.join(" · "),
+        snapshotIds: collected,
+      });
+      await refresh();
+    } catch (e) {
+      alert(`执行失败: ${e}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runOne = async (cmd: string) => {
     setBusy(cmd);
-    setLastResult(null);
     try {
       const r = await invoke<ScenarioRunResult>(cmd);
-      setLastResult(r.summary);
+      setRecentBatch({ summary: r.summary, snapshotIds: r.snapshot_ids });
       await refresh();
     } catch (e) {
-      setLastResult(`执行失败: ${e}`);
+      alert(`执行失败: ${e}`);
     } finally {
       setBusy(null);
     }
   };
 
-  const restoreAll = async (ids: string[]) => {
-    if (!confirm(`一键还原 ${ids.length} 个快照?`)) return;
-    setBusy("restore");
+  const undoBatch = async () => {
+    if (!recentBatch) return;
+    setBusy("undo");
     try {
-      for (const id of ids) {
-        try {
-          await invoke("restore_snapshot", { snapshotId: id });
-        } catch (e) {
-          console.error("还原失败", id, e);
-        }
+      for (const id of recentBatch.snapshotIds) {
+        try { await invoke("restore_snapshot", { snapshotId: id }); } catch {}
       }
-      setLastResult(`已尝试还原 ${ids.length} 个快照`);
+      setRecentBatch(null);
       await refresh();
     } finally {
       setBusy(null);
     }
   };
-
-  const recentSnapshotsIds = snapshots.filter((s) => !s.restored_at && s.restorable !== false).map((s) => s.id);
 
   return (
     <div className="govern-panel">
-      <section className="scenario-grid">
-        <ScenarioCard
-          title="清『此电脑』"
-          desc="删除资源管理器『此电脑』里第三方塞的伪文件夹(网盘居多)。"
-          stats={pcStats}
-          busy={busy === "govern_clean_pc_namespace"}
-          onRun={() => runScenario("govern_clean_pc_namespace", "清『此电脑』伪文件夹")}
-        />
-        <ScenarioCard
-          title="停所有保活服务"
-          desc="停止已知国产软件的保活/维护/升级服务并禁止开机自启。"
-          stats={kaStats}
-          busy={busy === "govern_stop_keepalive"}
-          onRun={() => runScenario("govern_stop_keepalive", "停所有保活服务并禁自启")}
-        />
-        <ScenarioCard
-          title="清流氓快捷方式"
-          desc="删除桌面/开始菜单上命中流氓画像的 .lnk 快捷方式。"
-          stats={scStats}
-          busy={busy === "govern_clean_shortcuts"}
-          onRun={() => runScenario("govern_clean_shortcuts", "清流氓快捷方式")}
-        />
-        <FileAssocCard />
-      </section>
-
-      {lastResult && <div className="scenario-result">{lastResult}</div>}
-
-      <section>
-        <h2>
-          操作快照 <span className="count">{snapshots.length}</span>
-          {recentSnapshotsIds.length > 0 && (
-            <button onClick={() => restoreAll(recentSnapshotsIds)} className="btn-restore">
-              一键还原所有未还原 ({recentSnapshotsIds.length})
-            </button>
-          )}
-        </h2>
-        {snapshots.length === 0 ? (
-          <p className="muted">尚无快照。执行场景会自动建快照。</p>
-        ) : (
-          <SnapshotsTable snapshots={snapshots} onRefresh={refresh} />
+      {/* === 一键体检主按钮 === */}
+      <div className="hero-card">
+        <div className="hero-title">一键体检 + 清理</div>
+        <div className="hero-sub">扫一扫,清掉国产软件塞进系统的垃圾</div>
+        {totalPending > 0 && (
+          <div className="hero-names">
+            发现:
+            {uniqueDisplayNames.slice(0, 6).map((n, i) => (
+              <span key={i} className="vendor-chip">{n}</span>
+            ))}
+            {uniqueDisplayNames.length > 6 && (
+              <span className="muted small">等 {uniqueDisplayNames.length} 项</span>
+            )}
+          </div>
         )}
-      </section>
+        <button
+          className="hero-btn"
+          disabled={busy !== null || totalPending === 0}
+          onClick={oneClickAll}
+        >
+          {busy === "oneclick" ? "正在清理..." :
+            totalPending === 0 ? "✓ 你的电脑很干净,无需清理" :
+              `清掉这 ${totalPending} 项问题`}
+        </button>
+      </div>
+
+      {/* === 撤销条 === */}
+      {recentBatch && (
+        <div className="undo-bar">
+          <span>✓ 刚才{recentBatch.summary} · 不满意可以撤回</span>
+          <div>
+            <button onClick={undoBatch} disabled={busy === "undo"}>
+              {busy === "undo" ? "撤回中..." : "撤回这次"}
+            </button>
+            <button onClick={() => setRecentBatch(null)} className="ghost">关闭</button>
+          </div>
+        </div>
+      )}
+
+      {/* === 默认打开方式 (核心功能 ①) === */}
+      <FileAssocCard />
+
+      {/* === 高级:分别处理 === */}
+      <div className="advanced-toggle" onClick={() => setShowAdvanced(!showAdvanced)}>
+        {showAdvanced ? "▼" : "▶"} 高级:分别处理
+      </div>
+      {showAdvanced && (
+        <div className="scenario-grid">
+          <SimpleCard
+            title="清「我的电脑」里的图标"
+            stats={pc}
+            busy={busy === "govern_clean_pc_namespace"}
+            runLabel="清掉这些图标"
+            onRun={() => runOne("govern_clean_pc_namespace")}
+          />
+          <SimpleCard
+            title="关掉国产软件的后台"
+            stats={ka}
+            busy={busy === "govern_stop_keepalive"}
+            runLabel="关掉这些后台"
+            onRun={() => runOne("govern_stop_keepalive")}
+          />
+          <SimpleCard
+            title="清桌面/开始菜单快捷方式"
+            stats={sc}
+            busy={busy === "govern_clean_shortcuts"}
+            runLabel="清掉这些快捷方式"
+            onRun={() => runOne("govern_clean_shortcuts")}
+          />
+        </div>
+      )}
+
+      {/* === 历史记录 === */}
+      <div className="history-toggle" onClick={() => setShowUndo(!showUndo)}>
+        ↶ 历史操作 ({snapshots.length})
+      </div>
+      {showUndo && (
+        <div className="history-list">
+          {snapshots.slice(0, 20).map((s) => (
+            <HistoryItem key={s.id} s={s} onRefresh={refresh} />
+          ))}
+          {snapshots.length === 0 && <p className="muted">还没有操作过任何东西。</p>}
+        </div>
+      )}
     </div>
   );
 }
 
-function ScenarioCard({
-  title,
-  desc,
-  stats,
-  busy,
-  onRun,
+function SimpleCard({
+  title, stats, busy, runLabel, onRun,
 }: {
   title: string;
-  desc: string;
   stats: ScenarioStats | null;
   busy: boolean;
+  runLabel: string;
   onRun: () => void;
 }) {
+  const empty = stats?.pending === 0;
   return (
-    <div className="scenario-card">
-      <h3>{title}</h3>
-      <p className="muted small">{desc}</p>
-      <div className="scenario-stats">
-        <div className="stat-pending">{stats?.pending ?? "—"}</div>
-        <div className="stat-summary">{stats?.summary ?? "正在扫描..."}</div>
+    <div className={`simple-card ${empty ? "empty" : ""}`}>
+      <h4>{title}</h4>
+      <div className="simple-stats">
+        {empty ? (
+          <span className="ok">✓ 干净, 无需处理</span>
+        ) : (
+          <>
+            <span className="big-num">{stats?.pending ?? "—"}</span>
+            <span className="muted small">{stats?.summary || "..."}</span>
+          </>
+        )}
       </div>
+      {stats?.display_names && stats.display_names.length > 0 && (
+        <div className="vendor-list">
+          {stats.display_names.map((n, i) => (
+            <span key={i} className="vendor-chip small-chip">{n}</span>
+          ))}
+        </div>
+      )}
       <button
-        className="btn-exec scenario-btn"
-        disabled={busy || (stats?.pending ?? 0) === 0}
+        className="btn-exec simple-btn"
+        disabled={empty || busy}
         onClick={onRun}
       >
-        {busy ? "执行中..." : "一键执行"}
+        {busy ? "..." : runLabel}
+      </button>
+    </div>
+  );
+}
+
+function HistoryItem({ s, onRefresh }: { s: SnapshotManifest; onRefresh: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const restore = async () => {
+    setBusy(true);
+    try {
+      await invoke("restore_snapshot", { snapshotId: s.id });
+      onRefresh();
+    } catch (e) {
+      alert(`撤回失败: ${e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const time = new Date(s.created_at).toLocaleString("zh-CN", {
+    month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  });
+  return (
+    <div className={`history-item ${s.restored_at ? "restored" : ""}`}>
+      <div className="history-info">
+        <div className="history-action">{humanizeAction(s.action_kind, s.action_target)}</div>
+        <div className="history-time">{time}</div>
+      </div>
+      <button
+        disabled={!!s.restored_at || s.restorable === false || busy}
+        onClick={restore}
+        className="btn-restore"
+      >
+        {s.restored_at ? "已撤回" : s.restorable === false ? "不可撤回" : busy ? "..." : "撤回"}
       </button>
     </div>
   );
 }
 
 function FileAssocCard() {
+  const [apps, setApps] = useState<InstalledApp[]>([]);
   const [presets, setPresets] = useState<AssocPreset[]>([]);
-  const [exePath, setExePath] = useState("");
+  const [selectedApp, setSelectedApp] = useState<InstalledApp | null>(null);
   const [selectedPresets, setSelectedPresets] = useState<Set<string>>(new Set());
-  const [customExts, setCustomExts] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
 
   useEffect(() => {
+    invoke<InstalledApp[]>("fileassoc_detect_installed_apps").then(setApps);
     invoke<AssocPreset[]>("fileassoc_list_presets").then(setPresets);
   }, []);
 
-  const toggle = (id: string) => {
+  const togglePreset = (id: string) => {
     setSelectedPresets((s) => {
       const n = new Set(s);
       n.has(id) ? n.delete(id) : n.add(id);
@@ -198,23 +328,25 @@ function FileAssocCard() {
     });
   };
 
-  const allExts = [
-    ...presets.filter((p) => selectedPresets.has(p.id)).flatMap((p) => p.extensions),
-    ...customExts.split(/[\s,]+/).filter((s) => s.trim()).map((s) => s.trim()),
-  ];
+  // 选了 app 后, 默认勾选它对应类别的预设
+  const onPickApp = (app: InstalledApp) => {
+    setSelectedApp(app);
+    setSelectedPresets(new Set([app.category]));
+  };
+
+  const allExts = presets.filter((p) => selectedPresets.has(p.id)).flatMap((p) => p.extensions);
 
   const apply = async () => {
-    if (!exePath.trim() || allExts.length === 0) return;
+    if (!selectedApp || allExts.length === 0) return;
     setBusy(true);
     setResult(null);
     try {
       const r = await invoke<AssocResult>("fileassoc_set_app_defaults", {
-        exePath: exePath.trim(),
+        exePath: selectedApp.exe_path,
         extensions: allExts,
       });
-      const failed = r.extensions_failed.length;
       setResult(
-        `成功设了 ${r.extensions_set.length} 个扩展名 (UserChoice 清了 ${r.userchoice_cleared.length} 个),失败 ${failed} 个。首次打开此类文件 Windows 会让你选打开方式,选 "${r.progid}" 并勾"始终"即生效。`
+        `搞定。下次双击这类文件时,Windows 可能问一次「用哪个软件打开」,选「${selectedApp.display_name}」并勾「始终」就一劳永逸。`
       );
     } catch (e) {
       setResult(`失败: ${e}`);
@@ -224,92 +356,55 @@ function FileAssocCard() {
   };
 
   return (
-    <div className="scenario-card">
-      <h3>默认打开方式</h3>
-      <p className="muted small">选个 exe + 勾选格式预设,把这些格式的默认打开方式都给它。</p>
-      <input
-        type="text"
-        placeholder="exe 完整路径,例如 C:\Program Files\PotPlayer\PotPlayerMini64.exe"
-        value={exePath}
-        onChange={(e) => setExePath(e.target.value)}
-        className="assoc-input"
-      />
-      <div className="preset-chips">
-        {presets.map((p) => (
-          <label key={p.id} className={`chip ${selectedPresets.has(p.id) ? "on" : ""}`}>
-            <input
-              type="checkbox"
-              checked={selectedPresets.has(p.id)}
-              onChange={() => toggle(p.id)}
-            />
-            {p.label} ({p.extensions.length})
-          </label>
-        ))}
-      </div>
-      <input
-        type="text"
-        placeholder="自定义扩展名(逗号或空格分隔, 如 .iso .srt)"
-        value={customExts}
-        onChange={(e) => setCustomExts(e.target.value)}
-        className="assoc-input"
-      />
-      <div className="muted small">将设置 {allExts.length} 个扩展名</div>
-      <button
-        className="btn-exec scenario-btn"
-        disabled={busy || !exePath.trim() || allExts.length === 0}
-        onClick={apply}
-      >
-        {busy ? "..." : "设为默认"}
-      </button>
-      {result && <div className="scenario-result small">{result}</div>}
-    </div>
-  );
-}
+    <div className="hero-card assoc-hero">
+      <div className="hero-title">换默认打开方式</div>
+      <div className="hero-sub">选个软件 + 选格式, 让 Windows 默认用它打开</div>
 
-function SnapshotsTable({ snapshots, onRefresh }: { snapshots: SnapshotManifest[]; onRefresh: () => void }) {
-  const [busy, setBusy] = useState<string | null>(null);
-  const restore = async (id: string) => {
-    if (!confirm(`确认还原 ${id.slice(0, 22)}?`)) return;
-    setBusy(id);
-    try {
-      await invoke("restore_snapshot", { snapshotId: id });
-      onRefresh();
-    } catch (e) {
-      alert(`还原失败: ${e}`);
-    } finally {
-      setBusy(null);
-    }
-  };
-  return (
-    <table>
-      <thead>
-        <tr>
-          <th>时间</th>
-          <th>动作</th>
-          <th>目标</th>
-          <th>状态</th>
-          <th>还原</th>
-        </tr>
-      </thead>
-      <tbody>
-        {snapshots.slice(0, 30).map((s) => (
-          <tr key={s.id}>
-            <td className="small">{new Date(s.created_at).toLocaleString("zh-CN")}</td>
-            <td><code>{s.action_kind}</code></td>
-            <td className="mono small">{s.action_target}</td>
-            <td>{s.restored_at ? <span className="muted">已还原</span> : <span className="ok">可还原</span>}</td>
-            <td>
-              <button
-                className="btn-restore"
-                disabled={!!s.restored_at || s.restorable === false || busy !== null}
-                onClick={() => restore(s.id)}
-              >
-                {s.restorable === false ? "不可逆" : busy === s.id ? "..." : "还原"}
-              </button>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+      <div className="step-label">① 选个你信任的软件</div>
+      {apps.length === 0 ? (
+        <p className="muted small">没在本机找到推荐的应用 (PotPlayer/VLC/foobar2000/7-Zip 等)。可以装一个再回来。</p>
+      ) : (
+        <div className="app-grid">
+          {apps.map((a) => (
+            <div
+              key={a.key}
+              className={`app-tile ${selectedApp?.key === a.key ? "selected" : ""}`}
+              onClick={() => onPickApp(a)}
+            >
+              <div className="app-icon">{CAT_ICON[a.category] || "🛠️"}</div>
+              <div className="app-name">{a.display_name}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {selectedApp && (
+        <>
+          <div className="step-label">② 选要交给它的文件类型</div>
+          <div className="preset-chips">
+            {presets.map((p) => (
+              <label key={p.id} className={`chip ${selectedPresets.has(p.id) ? "on" : ""}`}>
+                <input
+                  type="checkbox"
+                  checked={selectedPresets.has(p.id)}
+                  onChange={() => togglePreset(p.id)}
+                />
+                {PRESET_ICON[p.id] || ""} {p.label} ({p.extensions.length} 种)
+              </label>
+            ))}
+          </div>
+
+          <button
+            className="hero-btn"
+            disabled={busy || allExts.length === 0}
+            onClick={apply}
+          >
+            {busy ? "..." : `把这 ${allExts.length} 种文件交给 ${selectedApp.display_name}`}
+          </button>
+        </>
+      )}
+
+      {result && <div className="result-box">{result}</div>}
+    </div>
   );
 }

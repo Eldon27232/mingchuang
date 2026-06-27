@@ -9,6 +9,7 @@
 //! 局限:UserChoice 的精确哈希锁定下一轮再做(打包 SetUserFTA 或自写哈希)。
 //! 本机实测 reg 写入完成后,首次打开此类文件 Windows 会弹"打开方式",选我们 ProgId 即生效。
 
+pub mod detect;
 pub mod presets;
 pub mod progid;
 

@@ -10,45 +10,63 @@ interface ElevationStatus {
 
 export default function App() {
   const [elev, setElev] = useState<ElevationStatus | null>(null);
-  const [tab, setTab] = useState<"govern" | "ai">("govern");
+  const [showAi, setShowAi] = useState(false);
+  const [relaunching, setRelaunching] = useState(false);
 
   useEffect(() => {
     invoke<ElevationStatus>("check_elevation").then(setElev).catch(() => {});
   }, []);
 
+  const relaunch = async () => {
+    setRelaunching(true);
+    try {
+      await invoke("relaunch_as_admin");
+    } catch (e) {
+      alert(`重启失败: ${e}\n\n你可以在文件管理器找到此程序,右键 → "以管理员身份运行"`);
+      setRelaunching(false);
+    }
+  };
+
+  // 未提权: 整个主界面被红色遮罩盖住, 只有一个超大按钮
+  if (elev && !elev.is_elevated) {
+    return (
+      <div className="uac-blocker">
+        <div className="uac-content">
+          <div className="uac-icon">🛡️</div>
+          <h1>需要管理员权限</h1>
+          <p>这个工具要改你电脑的系统设置,需要先以管理员身份打开。</p>
+          <button className="uac-btn" onClick={relaunch} disabled={relaunching}>
+            {relaunching ? "正在重启..." : "点这里,以管理员身份重启"}
+          </button>
+          <small>会弹出 Windows 的「用户账户控制」对话框,点「是」即可。</small>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app">
-      <header>
-        <h1>
-          kuake-fuckyou <span className="ver">v0.0.1</span>
-        </h1>
-        <p className="subtitle">
-          整治国产流氓软件的 Windows 11 治理工具 · 一次跑完即退出 · 不常驻后台
-        </p>
-      </header>
-
-      {elev && (
-        <div className={`banner ${elev.is_elevated ? "ok" : "warn"}`}>
-          <span className="badge-small">{elev.is_elevated ? "✓ 管理员" : "⚠ 未提权"}</span>
-          <span>{elev.message}</span>
+      <div className="topbar">
+        <div className="topbar-left">kuake-fuckyou</div>
+        <div className="topbar-right">
+          <button className="icon-btn" onClick={() => setShowAi(true)} title="问问 AI">
+            💬
+          </button>
         </div>
-      )}
-
-      <div className="tabs">
-        <button className={tab === "govern" ? "tab active" : "tab"} onClick={() => setTab("govern")}>
-          治理面板
-        </button>
-        <button className={tab === "ai" ? "tab active" : "tab"} onClick={() => setTab("ai")}>
-          AI 助手 ✨
-        </button>
       </div>
 
-      {tab === "govern" && <GovernPanel />}
-      {tab === "ai" && <AiPanel />}
+      <GovernPanel />
 
-      <footer>
-        <small>v0.0.1 · 一键场景治理 + 默认打开方式 + AI 双 agent · 不常驻</small>
-      </footer>
+      {showAi && (
+        <div className="ai-drawer-backdrop" onClick={() => setShowAi(false)}>
+          <div className="ai-drawer" onClick={(e) => e.stopPropagation()}>
+            <button className="drawer-close" onClick={() => setShowAi(false)}>
+              ✕
+            </button>
+            <AiPanel />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

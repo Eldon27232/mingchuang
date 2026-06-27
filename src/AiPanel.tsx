@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { humanizeToolCall, humanizeVerdict } from "./labels";
 
 interface ToolCallView {
   id: string;
@@ -22,7 +23,6 @@ interface Session {
   status: string;
   tool_call_count: number;
   last_error?: string | null;
-  aborted?: boolean;
 }
 interface AiConfig {
   provider: string;
@@ -49,9 +49,7 @@ export function AiPanel() {
     if (!c.api_key) setShowSettings(true);
   };
 
-  useEffect(() => {
-    loadConfig();
-  }, []);
+  useEffect(() => { loadConfig(); }, []);
 
   const refreshSession = async (id: string) => {
     const s = await invoke<Session | null>("ai_get_session", { sessionId: id });
@@ -63,7 +61,6 @@ export function AiPanel() {
 
   useEffect(() => {
     if (!sessionId) return;
-    // 一直轮询(简单,下一轮换 event 推送)
     const t = setInterval(() => refreshSession(sessionId), 800);
     return () => clearInterval(t);
   }, [sessionId]);
@@ -71,18 +68,6 @@ export function AiPanel() {
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [session?.messages.length]);
-
-  const startSession = async () => {
-    const id = await invoke<string>("ai_create_session");
-    setSessionId(id);
-    setSession({
-      id,
-      messages: [],
-      pending_call: null,
-      status: "idle",
-      tool_call_count: 0,
-    });
-  };
 
   const send = async () => {
     if (!input.trim()) return;
@@ -93,11 +78,9 @@ export function AiPanel() {
     }
     const msg = input;
     setInput("");
-    setSession((prev) =>
-      prev
-        ? { ...prev, messages: [...prev.messages, { role: "user", content: msg }], status: "thinking" }
-        : prev
-    );
+    setSession((prev) => prev
+      ? { ...prev, messages: [...prev.messages, { role: "user", content: msg }], status: "thinking" }
+      : prev);
     try {
       await invoke("ai_send_message", { sessionId: sid, message: msg });
       await refreshSession(sid);
@@ -113,7 +96,7 @@ export function AiPanel() {
       await invoke("ai_abort_session", { sessionId });
       await refreshSession(sessionId);
     } catch (e) {
-      alert(`中止失败: ${e}`);
+      alert(`停止失败: ${e}`);
     }
   };
 
@@ -131,25 +114,18 @@ export function AiPanel() {
     setEditingIndex(i);
     setEditingText(text);
   };
-
   const cancelEdit = () => {
     setEditingIndex(null);
     setEditingText("");
   };
-
   const submitEdit = async () => {
     if (!sessionId || editingIndex === null) return;
     const text = editingText;
     const idx = editingIndex;
     cancelEdit();
     try {
-      // 先中止,避免编辑中 LLM 又改了 messages
       await invoke("ai_abort_session", { sessionId });
-      await invoke("ai_edit_user_message", {
-        sessionId,
-        msgIndex: idx,
-        newContent: text,
-      });
+      await invoke("ai_edit_user_message", { sessionId, msgIndex: idx, newContent: text });
       await refreshSession(sessionId);
     } catch (e) {
       alert(`编辑失败: ${e}`);
@@ -166,7 +142,12 @@ export function AiPanel() {
     }
   };
 
-  // 找到最后一条 assistant 索引,用于显示"重试"
+  const startNewSession = async () => {
+    const id = await invoke<string>("ai_create_session");
+    setSessionId(id);
+    setSession({ id, messages: [], pending_call: null, status: "idle", tool_call_count: 0 });
+  };
+
   const lastAssistantIdx = (() => {
     if (!session) return -1;
     for (let i = session.messages.length - 1; i >= 0; i--) {
@@ -178,15 +159,10 @@ export function AiPanel() {
   return (
     <div className="ai-panel">
       <div className="ai-header">
-        <h2>AI 助手</h2>
+        <h2>问问 AI</h2>
         <div className="ai-header-actions">
-          {sessionId && (
-            <span className="muted small">
-              status={session?.status ?? "?"} · tools={session?.tool_call_count ?? 0}
-            </span>
-          )}
-          <button onClick={startSession}>新会话</button>
-          <button onClick={() => setShowSettings(true)}>⚙ 设置</button>
+          <button className="icon-btn" onClick={startNewSession} title="新会话">＋</button>
+          <button className="icon-btn" onClick={() => setShowSettings(true)} title="设置">⚙</button>
         </div>
       </div>
 
@@ -194,25 +170,20 @@ export function AiPanel() {
         <SettingsModal
           initial={config!}
           onClose={() => setShowSettings(false)}
-          onSaved={(c) => {
-            setConfig(c);
-            setShowSettings(false);
-          }}
+          onSaved={(c) => { setConfig(c); setShowSettings(false); }}
         />
       )}
 
       {!config?.api_key && !showSettings && (
         <div className="banner warn">
-          ⚠ 未配置 API key,请点右上"⚙ 设置"填入 Anthropic key 后再用 AI。
+          ⚠ 先点右上 ⚙ 填入 API 密钥才能用。没有的话点开有说明。
         </div>
       )}
 
       <div className="ai-log" ref={logRef}>
         {(session?.messages ?? []).map((m, i) => (
           <MessageView
-            key={i}
-            m={m}
-            index={i}
+            key={i} m={m} index={i}
             onEdit={startEdit}
             onRetry={i === lastAssistantIdx && !isRunning && !isWaiting ? retry : undefined}
             editing={editingIndex === i}
@@ -222,9 +193,7 @@ export function AiPanel() {
             onCancelEdit={cancelEdit}
           />
         ))}
-        {session?.last_error && (
-          <div className="ai-msg err">⚠ {session.last_error}</div>
-        )}
+        {session?.last_error && <div className="ai-msg err">⚠ {session.last_error}</div>}
         {isRunning && (
           <div className="ai-msg assistant thinking">
             <span className="thinking-dots">思考中</span>
@@ -232,26 +201,19 @@ export function AiPanel() {
         )}
       </div>
 
-      {session?.pending_call && (
-        <PendingApproval call={session.pending_call} onDecide={approve} />
-      )}
+      {session?.pending_call && <PendingApproval call={session.pending_call} onDecide={approve} />}
 
       <div className="ai-input">
         <input
           type="text"
-          placeholder="自然语言描述电脑问题,例如:123云盘装了卸不掉帮我清"
+          placeholder="123云盘装了卸不掉,帮我清"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              send();
-            }
-          }}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
           disabled={isRunning || !config?.api_key}
         />
         {isRunning || isWaiting ? (
-          <button onClick={abort} className="btn-restore">停止</button>
+          <button onClick={abort} style={{ background: "var(--danger)" }}>停止</button>
         ) : (
           <button onClick={send} disabled={!input.trim() || !config?.api_key}>发送</button>
         )}
@@ -261,19 +223,10 @@ export function AiPanel() {
 }
 
 function MessageView({
-  m,
-  index,
-  onEdit,
-  onRetry,
-  editing,
-  editingText,
-  setEditingText,
-  onSubmitEdit,
-  onCancelEdit,
+  m, index, onEdit, onRetry, editing, editingText, setEditingText, onSubmitEdit, onCancelEdit,
 }: {
-  m: ChatMessage;
-  index: number;
-  onEdit: (i: number, text: string) => void;
+  m: ChatMessage; index: number;
+  onEdit: (i: number, t: string) => void;
   onRetry?: () => void;
   editing: boolean;
   editingText: string;
@@ -282,72 +235,54 @@ function MessageView({
   onCancelEdit: () => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-
   const toggle = (id: string) => {
-    setExpanded((s) => {
-      const n = new Set(s);
-      n.has(id) ? n.delete(id) : n.add(id);
-      return n;
-    });
+    setExpanded((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   };
 
-  // tool role 完全不展示 (这是 tool_result, AI 看的, 用户不需要)
   if (m.role === "tool") return null;
 
   if (m.role === "user") {
     return (
-      <div
-        className="ai-msg user"
-        onContextMenu={(e) => {
-          e.preventDefault();
-          if (!editing) onEdit(index, m.content);
-        }}
-        title="右键重新编辑"
-      >
+      <div className="ai-msg user" onContextMenu={(e) => { e.preventDefault(); if (!editing) onEdit(index, m.content); }} title="右键改">
         <div className="ai-msg-role">你</div>
         {editing ? (
           <div className="edit-box">
-            <textarea
-              value={editingText}
-              onChange={(e) => setEditingText(e.target.value)}
-              rows={Math.max(2, editingText.split("\n").length)}
-              autoFocus
-            />
+            <textarea value={editingText} onChange={(e) => setEditingText(e.target.value)}
+              rows={Math.max(2, editingText.split("\n").length)} autoFocus />
             <div className="edit-buttons">
               <button onClick={onCancelEdit}>取消</button>
               <button className="btn-exec" onClick={onSubmitEdit}>重发</button>
             </div>
           </div>
-        ) : (
-          <div className="ai-msg-text">{m.content}</div>
-        )}
+        ) : <div className="ai-msg-text">{m.content}</div>}
       </div>
     );
   }
 
-  // assistant
   return (
     <div className="ai-msg assistant">
       <div className="ai-msg-role">AI</div>
       {m.content && <div className="ai-msg-text">{m.content}</div>}
       {m.tool_calls?.map((c) => {
         const ex = expanded.has(c.id);
+        const humanized = humanizeToolCall(c.name, c.args);
         return (
           <div key={c.id} className={`ai-toolcall status-${c.status}`}>
             <div className="toolcall-head" onClick={() => toggle(c.id)}>
               <span className="caret">{ex ? "▼" : "▶"}</span>
-              <code>{c.name}</code>
+              <span className="toolcall-action">{humanized}</span>
               <span className="muted small"> · {statusLabel(c.status)}</span>
-              {c.result && !ex && <span className="muted small toolcall-summary"> · {c.result}</span>}
             </div>
             {ex && (
               <div className="toolcall-body">
-                {c.review && (
-                  <div className="ai-review small">
-                    [Reviewer:{c.review.verdict}] {c.review.reason}
-                  </div>
-                )}
-                <pre className="ai-args">{JSON.stringify(c.args, null, 2)}</pre>
+                {c.review && (() => {
+                  const v = humanizeVerdict(c.review.verdict);
+                  return <div className={`ai-review ${v.cls}`}>{v.icon} {v.text} ({c.review.reason})</div>;
+                })()}
+                <details>
+                  <summary className="muted small">技术细节 ({c.name})</summary>
+                  <pre className="ai-args">{JSON.stringify(c.args, null, 2)}</pre>
+                </details>
                 {c.result && <div className="ai-result small">→ {c.result}</div>}
               </div>
             )}
@@ -365,8 +300,8 @@ function MessageView({
 
 function statusLabel(s: string): string {
   switch (s) {
-    case "reviewing": return "审查中";
-    case "waiting_approval": return "待批准";
+    case "reviewing": return "检查中";
+    case "waiting_approval": return "等你确认";
     case "approved": return "已批";
     case "denied": return "已拒";
     case "executing": return "执行中";
@@ -376,37 +311,27 @@ function statusLabel(s: string): string {
   }
 }
 
-function PendingApproval({
-  call,
-  onDecide,
-}: {
-  call: ToolCallView;
-  onDecide: (d: "approve" | "deny") => void;
-}) {
+function PendingApproval({ call, onDecide }: { call: ToolCallView; onDecide: (d: "approve" | "deny") => void; }) {
+  const v = call.review ? humanizeVerdict(call.review.verdict) : null;
   return (
     <div className="ai-approval">
-      <div className="ai-approval-title">⏳ AI 想做这件事, 等你确认</div>
-      <div>
-        要调用 <code>{call.name}</code>:
-      </div>
-      <pre>{JSON.stringify(call.args, null, 2)}</pre>
-      {call.review && (
-        <div className="ai-review">
-          [Reviewer:{call.review.verdict}] {call.review.reason}
-        </div>
-      )}
+      <div className="ai-approval-title">⏳ AI 想替你做这件事</div>
+      <div>{humanizeToolCall(call.name, call.args)}</div>
+      {v && <div className={`ai-review ${v.cls}`}>{v.icon} {v.text}{call.review?.reason ? ` — ${call.review.reason}` : ""}</div>}
+      <details>
+        <summary className="muted small">技术细节 ({call.name})</summary>
+        <pre>{JSON.stringify(call.args, null, 2)}</pre>
+      </details>
       <div className="ai-approval-buttons">
-        <button className="btn-exec" onClick={() => onDecide("approve")}>批准并执行</button>
-        <button className="btn-restore" onClick={() => onDecide("deny")}>拒绝</button>
+        <button className="btn-restore" onClick={() => onDecide("deny")}>不要</button>
+        <button className="btn-exec" onClick={() => onDecide("approve")}>好</button>
       </div>
     </div>
   );
 }
 
 function SettingsModal({
-  initial,
-  onClose,
-  onSaved,
+  initial, onClose, onSaved,
 }: {
   initial: AiConfig;
   onClose: () => void;
@@ -434,49 +359,48 @@ function SettingsModal({
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>AI 设置</h3>
-        <div className="muted small">本工具用 Anthropic Claude。下一轮加 OpenAI 兼容。</div>
 
-        <label>Provider</label>
-        <input value={draft.provider} disabled />
-
-        <label>API key</label>
+        <label>🔑 API 密钥</label>
         <input
           type="password"
           value={draft.api_key}
           onChange={(e) => set("api_key", e.target.value)}
-          placeholder="sk-ant-..."
+          placeholder="sk-ant-... 或 sk-..."
         />
-        <div className="muted small">填新值会覆盖;含…的脱敏值会保留原 key。</div>
+        <small className="muted">
+          没有的话:{" "}
+          <a href="https://console.anthropic.com/" target="_blank" rel="noreferrer">claude.ai</a>{" "}
+          注册并创建 key, 或填其他兼容服务的 key (DeepSeek/Kimi 等)。
+        </small>
 
-        <label>Base URL</label>
-        <input value={draft.base_url} onChange={(e) => set("base_url", e.target.value)} />
+        <details>
+          <summary>🛠 高级设置(给开发者)</summary>
 
-        <label>Executor 模型</label>
-        <input
-          value={draft.model_executor}
-          onChange={(e) => set("model_executor", e.target.value)}
-        />
+          <label>服务商 (anthropic 或 openai)</label>
+          <input value={draft.provider} onChange={(e) => set("provider", e.target.value)} />
 
-        <label>Reviewer 模型(小模型,审查危险动作)</label>
-        <input
-          value={draft.model_reviewer}
-          onChange={(e) => set("model_reviewer", e.target.value)}
-        />
+          <label>Base URL</label>
+          <input value={draft.base_url} onChange={(e) => set("base_url", e.target.value)} />
 
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={draft.auto_approve_all}
-            onChange={(e) => set("auto_approve_all", e.target.checked)}
-          />
-          Reviewer 判 safe 时自动放行(否则破坏性动作都要点确认)
-        </label>
+          <label>Executor 模型</label>
+          <input value={draft.model_executor} onChange={(e) => set("model_executor", e.target.value)} />
+
+          <label>Reviewer 模型(小模型, 审查危险动作)</label>
+          <input value={draft.model_reviewer} onChange={(e) => set("model_reviewer", e.target.value)} />
+
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={draft.auto_approve_all}
+              onChange={(e) => set("auto_approve_all", e.target.checked)}
+            />
+            安全的破坏性动作自动放行
+          </label>
+        </details>
 
         <div className="modal-buttons">
           <button onClick={onClose}>取消</button>
-          <button className="btn-exec" onClick={save} disabled={saving}>
-            {saving ? "..." : "保存"}
-          </button>
+          <button className="btn-exec" onClick={save} disabled={saving}>{saving ? "..." : "保存"}</button>
         </div>
       </div>
     </div>

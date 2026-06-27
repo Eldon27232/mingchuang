@@ -14,6 +14,8 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             commands::check_elevation,
+            commands::relaunch_as_admin,
+            commands::fileassoc_detect_installed_apps,
             commands::list_profiles,
             commands::scan_pc_namespace,
             commands::dry_run_profile,

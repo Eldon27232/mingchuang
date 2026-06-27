@@ -13,8 +13,12 @@ use serde::Serialize;
 pub struct ScenarioStats {
     /// 等待处理的项数(扫描结果)
     pub pending: usize,
-    /// 摘要(给 UI 显示,不含具体名字)
+    /// 摘要(给 UI 显示)
     pub summary: String,
+    /// 命中的"用户认识的厂商/软件名"列表(仅小白看得懂的, 不含技术细节)
+    /// 例: ["123云盘", "百度网盘", "酷狗音乐"]
+    #[serde(default)]
+    pub display_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -35,14 +39,25 @@ pub struct ScenarioRunResult {
 pub fn scan_pc_namespace() -> Result<ScenarioStats> {
     let items = namespace::scan_pc_namespace_items()?;
     let rogue: Vec<_> = items.into_iter().filter(|i| !i.is_system).collect();
+    let display_names: Vec<String> = rogue
+        .iter()
+        .map(|i| {
+            if i.display_name.is_empty() {
+                "未知项".into()
+            } else {
+                i.display_name.clone()
+            }
+        })
+        .collect();
     let summary = if rogue.is_empty() {
-        "『此电脑』里没发现第三方塞的伪文件夹, 一切正常。".into()
+        "你的「我的电脑」干干净净,没人偷塞图标。".into()
     } else {
-        format!("『此电脑』里发现 {} 个第三方塞的伪文件夹(网盘类居多)。", rogue.len())
+        format!("「我的电脑」里被塞了 {} 个图标,可以一键清掉。", rogue.len())
     };
     Ok(ScenarioStats {
         pending: rogue.len(),
         summary,
+        display_names,
     })
 }
 
@@ -114,14 +129,21 @@ pub fn clean_pc_namespace() -> Result<ScenarioRunResult> {
 
 pub fn scan_rogue_shortcuts() -> Result<ScenarioStats> {
     let items = shortcuts::scan_rogue()?;
+    let display_names: Vec<String> = items
+        .iter()
+        .filter_map(|i| i.matched_profile_name.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
     let summary = if items.is_empty() {
-        "桌面/开始菜单没发现已知国产流氓的快捷方式。".into()
+        "桌面和开始菜单很整洁,没有国产软件塞的多余快捷方式。".into()
     } else {
-        format!("桌面/开始菜单有 {} 个已知国产流氓的快捷方式可清。", items.len())
+        format!("桌面和开始菜单有 {} 个国产软件的快捷方式可清。", items.len())
     };
     Ok(ScenarioStats {
         pending: items.len(),
         summary,
+        display_names,
     })
 }
 
@@ -175,15 +197,16 @@ pub fn clean_rogue_shortcuts() -> Result<ScenarioRunResult> {
 // =============================================================================
 
 pub fn scan_keepalive_services() -> Result<ScenarioStats> {
-    let targets = collect_keepalive_service_names()?;
+    let (targets, display_names) = collect_keepalive_with_display()?;
     let summary = if targets.is_empty() {
-        "未发现已知国产软件的保活服务在跑(画像或内置规则未命中)。".into()
+        "没有国产软件在你电脑后台偷跑。".into()
     } else {
-        format!("发现 {} 个已知国产软件的保活服务, 可一键停止+禁自启。", targets.len())
+        format!("有 {} 个国产软件在后台偷跑,可一键关掉。", targets.len())
     };
     Ok(ScenarioStats {
         pending: targets.len(),
         summary,
+        display_names,
     })
 }
 
@@ -247,15 +270,20 @@ pub fn stop_keepalive_services() -> Result<ScenarioRunResult> {
 /// 收集本机当前在跑、命中画像 service_names 的服务名列表。
 /// 后端内部使用,**不外泄前端**。
 fn collect_keepalive_service_names() -> Result<Vec<String>> {
+    Ok(collect_keepalive_with_display()?.0)
+}
+
+/// 同上, 但同时返回该服务对应画像的人话 display_name
+fn collect_keepalive_with_display() -> Result<(Vec<String>, Vec<String>)> {
     let profiles = load_profiles().unwrap_or_default();
-    let mut wanted: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // service_name(lc) -> profile_display_name
+    let mut wanted: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for p in &profiles {
         for s in &p.fingerprints.service_names {
-            wanted.insert(s.to_lowercase());
+            wanted.insert(s.to_lowercase(), p.name.clone());
         }
     }
 
-    // 用 PowerShell 列服务(简单可靠)
     let out = std::process::Command::new("powershell")
         .args([
             "-NoProfile",
@@ -270,12 +298,14 @@ fn collect_keepalive_service_names() -> Result<Vec<String>> {
         .collect();
 
     let mut hits = Vec::new();
+    let mut display_set: std::collections::HashSet<String> = std::collections::HashSet::new();
     for name in running {
-        if wanted.contains(&name.to_lowercase()) {
+        if let Some(display) = wanted.get(&name.to_lowercase()) {
             hits.push(name);
+            display_set.insert(display.clone());
         }
     }
-    Ok(hits)
+    Ok((hits, display_set.into_iter().collect()))
 }
 
 fn adhoc_profile(actions: Vec<Action>) -> Profile {
