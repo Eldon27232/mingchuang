@@ -1,4 +1,5 @@
 mod action;
+mod ai;
 mod commands;
 mod elevation;
 mod inventory;
@@ -17,6 +18,12 @@ pub fn run() {
             commands::execute_profile_action,
             commands::list_snapshots,
             commands::restore_snapshot,
+            commands::ai_get_config,
+            commands::ai_set_config,
+            commands::ai_create_session,
+            commands::ai_get_session,
+            commands::ai_send_message,
+            commands::ai_approve_pending,
         ])
         .run(tauri::generate_context!())
         .expect("error while running kuake-fuckyou");

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { AiPanel } from "./AiPanel";
 
 // ---- 类型 ----
 interface Action {
@@ -75,6 +76,7 @@ export default function App() {
   const [elev, setElev] = useState<ElevationStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [toasts, setToasts] = useState<{ id: number; kind: "ok" | "err"; msg: string }[]>([]);
+  const [tab, setTab] = useState<"govern" | "ai">("govern");
 
   const refreshAll = async () => {
     try {
@@ -176,6 +178,17 @@ export default function App() {
         </div>
       )}
 
+      <div className="tabs">
+        <button className={tab === "govern" ? "tab active" : "tab"} onClick={() => setTab("govern")}>
+          治理面板
+        </button>
+        <button className={tab === "ai" ? "tab active" : "tab"} onClick={() => setTab("ai")}>
+          AI 助手 ✨
+        </button>
+      </div>
+
+      {tab === "ai" && <AiPanel />}
+
       <div className="toasts">
         {toasts.map((t) => (
           <div key={t.id} className={`toast ${t.kind}`}>
@@ -184,6 +197,7 @@ export default function App() {
         ))}
       </div>
 
+      {tab === "govern" && <>
       {/* 画像档案 */}
       <section>
         <h2>
@@ -317,8 +331,10 @@ export default function App() {
         )}
       </section>
 
+      </>}
+
       <footer>
-        <small>v0.0.1 P0 · 仅 reg-delete 已接入 · service/file/task/process-kill 等动作下一轮</small>
+        <small>v0.0.1 · reg/service/task/process 动作全接入 · AI 双 agent MVP · file-delete 下一轮</small>
       </footer>
     </div>
   );

@@ -1,0 +1,505 @@
+//! Executor + Reviewer 编排
+//!
+//! Session 全局状态 (Mutex<HashMap<id, Session>>):
+//!   - 用户发消息 → push to messages → 启动 Executor
+//!   - Executor 调 LLM → 拿到 text/tool_use blocks
+//!     - text: append to messages, 显示
+//!     - tool_use:
+//!         - 只读 tool: 直接 run_tool, 结果回喂 Executor, 继续 loop
+//!         - 破坏性 tool: 调 Reviewer 评估 → safe 自动执行 / needs_approval 等用户
+//!   - stop_reason=end_turn: 会话结束
+
+use crate::ai::client::{self, AnthropicBlock, AnthropicMessage, AnthropicRequest};
+use crate::ai::config::AiConfig;
+use crate::ai::tools;
+use crate::ai::{ChatMessage, ReviewResult, ToolCallStatus, ToolCallView};
+use anyhow::{anyhow, Context, Result};
+use serde::Serialize;
+use serde_json::json;
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+const MAX_TOKENS: u32 = 4096;
+const SYSTEM_PROMPT: &str = r#"你是 kuake-fuckyou 内置的 Windows 治理 AI 助手, 帮用户清理国产流氓软件。
+
+工作原则:
+1. 先用 query_* 只读工具诊断 (扫描进程/服务/命名空间/注册表), 不要瞎调破坏性工具
+2. 任何破坏性工具调用都必须在 reason 字段写清楚为什么改, 给用户看的中文
+3. 优先用最小动作集合解决问题, 不批量乱杀
+4. 完成后用 query_* 再确认结果
+5. 系统关键键已经被白名单拦, 你不必担心误删 Defender 等
+
+可用工具(强调危险性):
+- query_pc_namespace: 列『此电脑』NameSpace 项 (安全)
+- query_processes/services: 列进程/服务 (安全)
+- query_registry_value: 读注册表 (安全)
+- reg_delete: 删注册表 (危险, 有快照可还原)
+- service_stop/service_disable: 停/禁用服务 (危险, 可还原)
+- task_disable: 禁用计划任务 (危险, 可还原)
+- process_kill: 杀进程 (不可逆!)
+
+对话用简体中文, 行动前简要说明计划。"#;
+
+const REVIEWER_PROMPT: &str = r#"你是 kuake-fuckyou 的安全审查员。Executor 想调用一个破坏性工具,
+你的任务是判断:
+- safe: 完全安全, 可以直接执行 (例: 删除已知国产流氓的注册表项 / 停掉其服务)
+- needs_approval: 风险存在,需要让用户确认 (例: 杀进程, 操作不熟悉的服务名)
+- deny: 明显危险,应直接拒绝 (例: 操作 Defender / 系统服务)
+
+输出严格 JSON: {"verdict": "safe|needs_approval|deny", "reason": "中文简短理由"}
+
+只输出 JSON, 不要其他文字。"#;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Session {
+    pub id: String,
+    pub messages: Vec<ChatMessage>,
+    /// 待用户审批的 tool call (一次只有一个)
+    pub pending_call: Option<ToolCallView>,
+    pub status: SessionStatus,
+    /// 累计 tool 调用次数, 防失控循环
+    pub tool_call_count: usize,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionStatus {
+    Idle,
+    Thinking,
+    WaitingApproval,
+    Done,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalDecision {
+    Approve,
+    Deny,
+}
+
+const MAX_TOOL_CALLS: usize = 30;
+
+static SESSIONS: Mutex<Option<HashMap<String, Session>>> = Mutex::new(None);
+
+fn with_sessions<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut HashMap<String, Session>) -> R,
+{
+    let mut g = SESSIONS.lock().unwrap();
+    if g.is_none() {
+        *g = Some(HashMap::new());
+    }
+    f(g.as_mut().unwrap())
+}
+
+pub fn create_session() -> String {
+    let id = crate::snapshot::new_snapshot_id();
+    let s = Session {
+        id: id.clone(),
+        messages: Vec::new(),
+        pending_call: None,
+        status: SessionStatus::Idle,
+        tool_call_count: 0,
+        last_error: None,
+    };
+    with_sessions(|m| m.insert(id.clone(), s));
+    id
+}
+
+pub fn get_session(id: &str) -> Option<Session> {
+    with_sessions(|m| m.get(id).cloned())
+}
+
+/// 用户发送一条消息, 启动 agent loop
+pub async fn send_user_message(session_id: &str, user_msg: String) -> Result<()> {
+    let cfg = crate::ai::config::load();
+    if !crate::ai::config::is_configured(&cfg) {
+        return Err(anyhow!("未配置 AI API key, 请在设置里填入"));
+    }
+
+    with_sessions(|m| {
+        if let Some(s) = m.get_mut(session_id) {
+            s.messages.push(ChatMessage {
+                role: "user".into(),
+                content: user_msg.clone(),
+                tool_calls: None,
+                tool_call_id: None,
+            });
+            s.status = SessionStatus::Thinking;
+            s.last_error = None;
+        }
+    });
+
+    run_executor_loop(session_id, &cfg).await
+}
+
+/// 用户审批结果
+pub async fn approve_pending(session_id: &str, decision: ApprovalDecision) -> Result<()> {
+    let cfg = crate::ai::config::load();
+    let pending = with_sessions(|m| {
+        m.get_mut(session_id).and_then(|s| s.pending_call.clone())
+    });
+    let mut call = match pending {
+        Some(c) => c,
+        None => return Err(anyhow!("无待审批 tool call")),
+    };
+
+    match decision {
+        ApprovalDecision::Approve => {
+            call.status = ToolCallStatus::Approved;
+        }
+        ApprovalDecision::Deny => {
+            call.status = ToolCallStatus::Denied;
+            // 把"拒绝"作为 tool_result 喂回 Executor
+            with_sessions(|m| {
+                if let Some(s) = m.get_mut(session_id) {
+                    s.pending_call = None;
+                    s.status = SessionStatus::Thinking;
+                    // 把 denied 状态记到最后一条 assistant 消息
+                    if let Some(last) = s.messages.last_mut() {
+                        if let Some(calls) = last.tool_calls.as_mut() {
+                            if let Some(c) = calls.iter_mut().find(|c| c.id == call.id) {
+                                c.status = ToolCallStatus::Denied;
+                            }
+                        }
+                    }
+                    // 加一个 tool 角色消息说被拒
+                    s.messages.push(ChatMessage {
+                        role: "tool".into(),
+                        content: "用户拒绝执行此动作".into(),
+                        tool_calls: None,
+                        tool_call_id: Some(call.id.clone()),
+                    });
+                }
+            });
+            return run_executor_loop(session_id, &cfg).await;
+        }
+    }
+
+    // approve -> 真正执行 → 继续 LLM 循环
+    do_execute_call(session_id, call).await?;
+    run_executor_loop(session_id, &cfg).await
+}
+
+/// 同步执行一个 tool call: 跑 tool + 写 messages + 更新状态。**不**调 run_executor_loop, 避免 async 递归。
+async fn do_execute_call(session_id: &str, mut call: ToolCallView) -> Result<()> {
+    call.status = ToolCallStatus::Executing;
+    update_call(session_id, &call);
+    let result = tools::run_tool(&call.name, &call.args);
+    let (status, summary, _data) = match result {
+        Ok(o) => (
+            if o.ok { ToolCallStatus::Done } else { ToolCallStatus::Failed },
+            o.summary,
+            o.data,
+        ),
+        Err(e) => (ToolCallStatus::Failed, format!("执行失败: {e:#}"), json!(null)),
+    };
+    call.status = status.clone();
+    call.result = Some(summary.clone());
+    update_call(session_id, &call);
+
+    with_sessions(|m| {
+        if let Some(s) = m.get_mut(session_id) {
+            s.pending_call = None;
+            s.status = SessionStatus::Thinking;
+            s.messages.push(ChatMessage {
+                role: "tool".into(),
+                content: format!("[{}] {}", call.name, summary),
+                tool_calls: None,
+                tool_call_id: Some(call.id.clone()),
+            });
+            for msg in s.messages.iter_mut().rev() {
+                if let Some(calls) = msg.tool_calls.as_mut() {
+                    if let Some(c) = calls.iter_mut().find(|c| c.id == call.id) {
+                        c.status = status.clone();
+                        c.result = Some(summary.clone());
+                        break;
+                    }
+                }
+            }
+        }
+    });
+    Ok(())
+}
+
+fn update_call(session_id: &str, call: &ToolCallView) {
+    with_sessions(|m| {
+        if let Some(s) = m.get_mut(session_id) {
+            for msg in s.messages.iter_mut().rev() {
+                if let Some(calls) = msg.tool_calls.as_mut() {
+                    if let Some(c) = calls.iter_mut().find(|c| c.id == call.id) {
+                        *c = call.clone();
+                        return;
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// Executor 主循环: 调 LLM → 处理 blocks → 继续直到 end_turn 或 等用户
+async fn run_executor_loop(session_id: &str, cfg: &AiConfig) -> Result<()> {
+    loop {
+        // 取当前 session 状态构造 LLM 请求
+        let (messages, count) = with_sessions(|m| {
+            let s = m.get(session_id).cloned();
+            (s.as_ref().map(|s| s.messages.clone()).unwrap_or_default(),
+             s.as_ref().map(|s| s.tool_call_count).unwrap_or(0))
+        });
+        if count >= MAX_TOOL_CALLS {
+            with_sessions(|m| {
+                if let Some(s) = m.get_mut(session_id) {
+                    s.status = SessionStatus::Failed;
+                    s.last_error = Some(format!("超过最大 tool 调用数 {MAX_TOOL_CALLS}, 强制停止"));
+                    s.messages.push(ChatMessage {
+                        role: "assistant".into(),
+                        content: format!("⚠ 已达 tool 调用上限 {MAX_TOOL_CALLS},停止以防失控。"),
+                        tool_calls: None,
+                        tool_call_id: None,
+                    });
+                }
+            });
+            return Ok(());
+        }
+
+        let anthropic_msgs = to_anthropic_messages(&messages);
+        let req = AnthropicRequest {
+            model: cfg.model_executor.clone(),
+            max_tokens: MAX_TOKENS,
+            system: Some(SYSTEM_PROMPT.into()),
+            messages: anthropic_msgs,
+            tools: tools::definitions(),
+        };
+        let resp = match client::call(cfg, &req).await {
+            Ok(r) => r,
+            Err(e) => {
+                with_sessions(|m| {
+                    if let Some(s) = m.get_mut(session_id) {
+                        s.status = SessionStatus::Failed;
+                        s.last_error = Some(format!("LLM 调用失败: {e:#}"));
+                    }
+                });
+                return Err(e);
+            }
+        };
+
+        // 分离 text 和 tool_use blocks
+        let mut text_parts = Vec::new();
+        let mut tool_calls = Vec::new();
+        for b in &resp.content {
+            match b {
+                AnthropicBlock::Text { text } => text_parts.push(text.clone()),
+                AnthropicBlock::ToolUse { id, name, input } => {
+                    tool_calls.push((id.clone(), name.clone(), input.clone()));
+                }
+                _ => {}
+            }
+        }
+
+        // 把 assistant 这一轮加进 history
+        let mut tc_views = Vec::new();
+        for (id, name, input) in &tool_calls {
+            tc_views.push(ToolCallView {
+                id: id.clone(),
+                name: name.clone(),
+                args: input.clone(),
+                review: None,
+                status: ToolCallStatus::Reviewing,
+                result: None,
+            });
+        }
+        with_sessions(|m| {
+            if let Some(s) = m.get_mut(session_id) {
+                s.messages.push(ChatMessage {
+                    role: "assistant".into(),
+                    content: text_parts.join("\n"),
+                    tool_calls: if tc_views.is_empty() { None } else { Some(tc_views.clone()) },
+                    tool_call_id: None,
+                });
+            }
+        });
+
+        if tool_calls.is_empty() {
+            // end_turn
+            with_sessions(|m| {
+                if let Some(s) = m.get_mut(session_id) {
+                    s.status = SessionStatus::Done;
+                }
+            });
+            return Ok(());
+        }
+
+        // 处理 tool calls
+        for (id, name, input) in tool_calls {
+            with_sessions(|m| {
+                if let Some(s) = m.get_mut(session_id) {
+                    s.tool_call_count += 1;
+                }
+            });
+            let mut call = ToolCallView {
+                id: id.clone(),
+                name: name.clone(),
+                args: input.clone(),
+                review: None,
+                status: ToolCallStatus::Reviewing,
+                result: None,
+            };
+            if tools::is_destructive(&name) {
+                // 调 Reviewer
+                let review = review_tool_call(cfg, &name, &input).await.unwrap_or_else(|e| ReviewResult {
+                    verdict: "needs_approval".into(),
+                    reason: format!("(Reviewer 调用失败, 保守降为待审批) {e:#}"),
+                });
+                call.review = Some(review.clone());
+                match (review.verdict.as_str(), cfg.auto_approve_all) {
+                    ("safe", true) => {
+                        // 用户配置了全程许可 + Reviewer 判 safe → 自动执行后继续 for
+                        call.status = ToolCallStatus::Approved;
+                        update_call(session_id, &call);
+                        do_execute_call(session_id, call).await?;
+                        continue;
+                    }
+                    ("deny", _) => {
+                        call.status = ToolCallStatus::Denied;
+                        update_call(session_id, &call);
+                        with_sessions(|m| {
+                            if let Some(s) = m.get_mut(session_id) {
+                                s.messages.push(ChatMessage {
+                                    role: "tool".into(),
+                                    content: format!("Reviewer 判定为危险并直接拒绝: {}", review.reason),
+                                    tool_calls: None,
+                                    tool_call_id: Some(call.id.clone()),
+                                });
+                            }
+                        });
+                        // 不 break, 继续看下一个 tool call (其实 Anthropic 一次只发一组,这里循环也最多 1 次)
+                    }
+                    _ => {
+                        // 等用户审批
+                        call.status = ToolCallStatus::WaitingApproval;
+                        update_call(session_id, &call);
+                        with_sessions(|m| {
+                            if let Some(s) = m.get_mut(session_id) {
+                                s.pending_call = Some(call.clone());
+                                s.status = SessionStatus::WaitingApproval;
+                            }
+                        });
+                        return Ok(());
+                    }
+                }
+            } else {
+                // 安全 tool, 直接执行
+                call.status = ToolCallStatus::Executing;
+                update_call(session_id, &call);
+                let r = tools::run_tool(&name, &input);
+                let (status, summary) = match r {
+                    Ok(o) => (
+                        if o.ok { ToolCallStatus::Done } else { ToolCallStatus::Failed },
+                        o.summary,
+                    ),
+                    Err(e) => (ToolCallStatus::Failed, format!("失败: {e:#}")),
+                };
+                call.status = status;
+                call.result = Some(summary.clone());
+                update_call(session_id, &call);
+                with_sessions(|m| {
+                    if let Some(s) = m.get_mut(session_id) {
+                        s.messages.push(ChatMessage {
+                            role: "tool".into(),
+                            content: format!("[{name}] {summary}"),
+                            tool_calls: None,
+                            tool_call_id: Some(id.clone()),
+                        });
+                    }
+                });
+            }
+        }
+        // 继续下一轮
+    }
+}
+
+async fn review_tool_call(cfg: &AiConfig, name: &str, args: &serde_json::Value) -> Result<ReviewResult> {
+    let user_msg = format!(
+        "Executor 想调用工具:\n  tool: {name}\n  args: {}\n\n请输出 JSON 判定。",
+        serde_json::to_string_pretty(args).unwrap_or_default()
+    );
+    let req = AnthropicRequest {
+        model: cfg.model_reviewer.clone(),
+        max_tokens: 512,
+        system: Some(REVIEWER_PROMPT.into()),
+        messages: vec![AnthropicMessage {
+            role: "user".into(),
+            content: serde_json::Value::String(user_msg),
+        }],
+        tools: vec![],
+    };
+    let resp = client::call(cfg, &req).await?;
+    let text = resp
+        .content
+        .iter()
+        .filter_map(|b| match b {
+            AnthropicBlock::Text { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    // 容错解析 JSON: 尝试找第一个 { 和最后一个 }
+    let json_str = if let (Some(i), Some(j)) = (text.find('{'), text.rfind('}')) {
+        &text[i..=j]
+    } else {
+        &text[..]
+    };
+    serde_json::from_str::<ReviewResult>(json_str)
+        .with_context(|| format!("Reviewer 输出无法解析: {text}"))
+}
+
+fn to_anthropic_messages(msgs: &[ChatMessage]) -> Vec<AnthropicMessage> {
+    // 把内部 ChatMessage 转 Anthropic 的格式
+    // 注意: tool_result 必须是 user role, content 数组形式
+    let mut out: Vec<AnthropicMessage> = Vec::new();
+    for m in msgs {
+        match m.role.as_str() {
+            "user" => out.push(AnthropicMessage {
+                role: "user".into(),
+                content: serde_json::Value::String(m.content.clone()),
+            }),
+            "assistant" => {
+                let mut blocks: Vec<serde_json::Value> = Vec::new();
+                if !m.content.is_empty() {
+                    blocks.push(json!({"type": "text", "text": m.content}));
+                }
+                if let Some(calls) = &m.tool_calls {
+                    for c in calls {
+                        blocks.push(json!({
+                            "type": "tool_use",
+                            "id": c.id,
+                            "name": c.name,
+                            "input": c.args
+                        }));
+                    }
+                }
+                out.push(AnthropicMessage {
+                    role: "assistant".into(),
+                    content: serde_json::Value::Array(blocks),
+                });
+            }
+            "tool" => {
+                // 转成 user-role 的 tool_result block
+                if let Some(id) = &m.tool_call_id {
+                    out.push(AnthropicMessage {
+                        role: "user".into(),
+                        content: json!([{
+                            "type": "tool_result",
+                            "tool_use_id": id,
+                            "content": m.content,
+                        }]),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}

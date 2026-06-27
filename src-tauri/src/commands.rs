@@ -1,4 +1,6 @@
 use crate::action::{self, ActionPlan, ExecResult};
+use crate::ai::agent::{self, ApprovalDecision, Session};
+use crate::ai::config::{self as ai_config, AiConfig};
 use crate::elevation::{self, ElevationStatus};
 use crate::inventory::namespace::{scan_pc_namespace_items, PcNamespaceItem};
 use crate::profile::{load_profiles, Profile};
@@ -47,4 +49,49 @@ pub fn list_snapshots() -> Result<Vec<SnapshotManifest>, String> {
 #[tauri::command]
 pub fn restore_snapshot(snapshot_id: String) -> Result<(), String> {
     action::restore_snapshot(&snapshot_id).map_err(|e| format!("{e:#}"))
+}
+
+// ---------- AI ----------
+
+#[tauri::command]
+pub fn ai_get_config() -> AiConfig {
+    ai_config::redact(&ai_config::load())
+}
+
+#[tauri::command]
+pub fn ai_set_config(cfg: AiConfig) -> Result<(), String> {
+    // 如果传入 api_key 是脱敏值(含 ...), 保留原 key 不动
+    let mut to_save = cfg.clone();
+    if to_save.api_key.contains("...") || to_save.api_key == "****" {
+        let existing = ai_config::load();
+        to_save.api_key = existing.api_key;
+    }
+    ai_config::save(&to_save).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn ai_create_session() -> String {
+    agent::create_session()
+}
+
+#[tauri::command]
+pub fn ai_get_session(session_id: String) -> Option<Session> {
+    agent::get_session(&session_id)
+}
+
+#[tauri::command]
+pub async fn ai_send_message(session_id: String, message: String) -> Result<(), String> {
+    agent::send_user_message(&session_id, message)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub async fn ai_approve_pending(
+    session_id: String,
+    decision: ApprovalDecision,
+) -> Result<(), String> {
+    agent::approve_pending(&session_id, decision)
+        .await
+        .map_err(|e| format!("{e:#}"))
 }
