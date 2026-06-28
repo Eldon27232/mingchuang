@@ -462,6 +462,62 @@ code { font-family: Consolas, monospace; background: var(--panel2); padding: 2px
 .insp-badge.baseline { background: rgba(16,185,129,0.15); color: var(--ok); }
 .insp-label { font-size: 12px; flex: 1; }
 
+/* AI 历史对话列表 */
+.ai-history-list {
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 8px 0 12px;
+  max-height: 320px; overflow-y: auto;
+  padding: 4px;
+}
+.ai-history-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 10px 4px;
+}
+.ai-history-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: 6px;
+  cursor: pointer; transition: background 0.05s;
+  position: relative;
+}
+.ai-history-row:hover { background: rgba(255,255,255,0.04); }
+.ai-history-row.current { background: rgba(99,179,237,0.1); border: 1px solid rgba(99,179,237,0.3); }
+.ai-history-title {
+  flex: 1; font-size: 13px; color: var(--fg);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ai-history-current-tag { color: var(--accent); font-size: 11px; }
+.ai-history-meta { font-size: 11px; flex-shrink: 0; }
+.ai-history-del {
+  background: transparent; border: none;
+  color: var(--muted); font-size: 14px;
+  cursor: pointer; padding: 4px 8px; border-radius: 4px;
+  flex-shrink: 0;
+}
+.ai-history-del:hover { background: rgba(239,68,68,0.15); color: var(--danger); }
+
+/* AI 工具调用 burst (单条消息内多 tool_call 合并) */
+.ai-toolburst {
+  margin-top: 6px; background: var(--panel2);
+  border: 1px solid var(--border); border-radius: 6px;
+  overflow: hidden;
+}
+.ai-toolburst.all-done { border-color: rgba(16,185,129,0.3); }
+.ai-toolburst.has-failed { border-color: rgba(239,68,68,0.3); }
+.toolburst-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; cursor: pointer;
+  background: rgba(99,179,237,0.06);
+  transition: background 0.05s;
+}
+.toolburst-head:hover { background: rgba(99,179,237,0.12); }
+.toolburst-count { font-size: 13px; font-weight: 500; color: var(--accent); }
+.toolburst-body {
+  padding: 6px 10px 8px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+
 /* AI 审批 modal */
 .ai-approval-modal { max-width: 540px; }
 .ai-approval-modal .ai-approval-action {
