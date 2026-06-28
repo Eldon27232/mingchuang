@@ -295,3 +295,14 @@ pub fn save_baseline(snap: &InspectionSnapshot) -> Result<()> {
     std::fs::write(&path, bytes).context("写 baseline 失败")?;
     Ok(())
 }
+
+/// 删 baseline.json — 下次巡检会重新走"首次建基准"分支, 不告警。
+/// GUI 上的"重置基准"按钮调这个。
+pub fn reset_baseline() -> Result<()> {
+    let path = baseline_path();
+    if path.exists() {
+        std::fs::remove_file(&path)
+            .with_context(|| format!("删 baseline 失败: {}", path.display()))?;
+    }
+    Ok(())
+}

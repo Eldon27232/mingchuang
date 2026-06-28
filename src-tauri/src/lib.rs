@@ -70,6 +70,7 @@ pub fn run() {
             commands::sentry_get_inspection_config,
             commands::sentry_set_inspection_config,
             commands::sentry_run_inspection_now,
+            commands::sentry_reset_inspection_baseline,
             commands::sentry_list_inspection_events,
         ])
         .run(tauri::generate_context!())

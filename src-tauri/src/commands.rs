@@ -226,6 +226,11 @@ pub fn sentry_run_inspection_now() -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn sentry_reset_inspection_baseline() -> Result<(), String> {
+    sentry_client::reset_inspection_baseline().map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
 pub fn sentry_list_inspection_events(limit: usize) -> Vec<InspectionEvent> {
     sentry_client::list_recent_inspection_events(limit.max(1).min(500))
 }

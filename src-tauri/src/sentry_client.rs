@@ -246,6 +246,10 @@ pub fn request_inspection_now() -> Result<()> {
     write_control(&c)
 }
 
+pub fn reset_inspection_baseline() -> Result<()> {
+    crate::inspection::reset_baseline()
+}
+
 pub fn list_recent_inspection_events(limit: usize) -> Vec<InspectionEvent> {
     let mut out = Vec::new();
     let dir = sentry_dir();

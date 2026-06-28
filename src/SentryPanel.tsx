@@ -112,6 +112,13 @@ export function SentryPanel() {
     });
   };
   const runInspNow = () => wrap("insp_now", async () => { await invoke("sentry_run_inspection_now"); });
+  const resetBaseline = async () => {
+    if (!confirm("清掉巡检基准? 下次巡检会把当前电脑状态当干净基准, 已有项目不再告警。")) return;
+    await wrap("reset_baseline", async () => {
+      await invoke("sentry_reset_inspection_baseline");
+      await invoke("sentry_run_inspection_now");
+    });
+  };
 
   const enableAutostart = () => wrap("enable", async () => { await invoke("sentry_enable_autostart"); });
   const disableAutostart = () => wrap("disable", async () => { await invoke("sentry_disable_autostart"); });
@@ -258,6 +265,9 @@ export function SentryPanel() {
                 ))}
                 <button onClick={runInspNow} disabled={busy === "insp_now"} className="seg-btn">
                   {busy === "insp_now" ? "..." : "立即巡检一次"}
+                </button>
+                <button onClick={resetBaseline} disabled={busy === "reset_baseline"} className="seg-btn" title="把当前状态当干净基准, 已有的告警都不再报">
+                  {busy === "reset_baseline" ? "..." : "重置基准"}
                 </button>
               </div>
             )}
