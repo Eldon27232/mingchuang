@@ -1,0 +1,4 @@
+# vendored PS-SFTA: 锁 LF, 防止 git core.autocrlf 把它转成 CRLF
+# 我们在 src-tauri/src/fileassoc/sfta.rs 用 .replace("...\n", ...) 做 perf patch,
+# 行尾不一致会让 patch 静默失配, Set-FTA 每次又变 2.5s。
+src-tauri/resources/SFTA.ps1 text eol=lf

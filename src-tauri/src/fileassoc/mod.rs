@@ -60,10 +60,10 @@ pub fn set_app_defaults(exe_path: &str, extensions: &[String]) -> Result<AssocRe
     }
     let progid = progid::register(&exe).context("注册 ProgId 失败")?;
 
-    let mut extensions_set = Vec::new();
     let mut extensions_failed = Vec::new();
-    let mut extensions_need_manual = Vec::new();
+    let mut sfta_targets: Vec<String> = Vec::new();
 
+    // Step 1: 校验 + OpenWithProgids (走 Rust, 快, 失败的不进 SFTA 批)
     let mut seen = std::collections::HashSet::new();
     for raw_ext in extensions {
         let ext = normalize_ext(raw_ext);
@@ -74,24 +74,28 @@ pub fn set_app_defaults(exe_path: &str, extensions: &[String]) -> Result<AssocRe
         if !seen.insert(ext.clone()) {
             continue;
         }
-
-        // 1) OpenWithProgids: 把 ProgId 加进 Windows "打开方式" 列表
         if let Err(e) = write_open_with_progids(&ext, &progid) {
             extensions_failed.push((ext.clone(), format!("OpenWithProgids: {e:#}")));
             continue;
         }
-
-        // 2) Set-FTA: 强制锁定 UserChoice (核心)
-        match sfta::force_set_user_choice(&ext, &progid) {
-            Ok(()) => extensions_set.push(ext.clone()),
-            Err(e) => {
-                // OpenWithProgids 已成功, UserChoice 没锁住 → 兜底引导手动
-                // (大概率是 UCPD.sys 保护的 http/https/.pdf, 或 PowerShell 不可用)
-                eprintln!("[sfta] {ext}: {e:#}");
-                extensions_need_manual.push(ext.clone());
-            }
-        }
+        sfta_targets.push(ext);
     }
+
+    // Step 2: 单次 powershell spawn 批量锁 UserChoice (核心性能优化)
+    let (extensions_set, extensions_need_manual) = match sfta::force_set_user_choice_batch(&progid, &sfta_targets) {
+        Ok(out) => {
+            for (e, msg) in &out.failed {
+                eprintln!("[sfta] {e}: {msg}");
+            }
+            let need_manual = out.failed.into_iter().map(|(e, _)| e).collect();
+            (out.ok, need_manual)
+        }
+        Err(e) => {
+            // 整批 PowerShell 启动失败 (策略禁用/未安装) → 全部走手动兜底
+            eprintln!("[sfta] 批处理整体失败, 全部回退手动: {e:#}");
+            (Vec::new(), sfta_targets)
+        }
+    };
 
     notify_shell_assoc_changed();
 
