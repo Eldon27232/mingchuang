@@ -63,7 +63,7 @@ fn builtin_image_names() -> Vec<&'static str> {
         // Microsoft Store / 后台传输
         "MicrosoftEdgeUpdate.exe",
         // 明窗自己
-        "kuake-fuckyou.exe", "mingchuang-sentry.exe", "明窗.exe",
+        "mingchuang.exe", "mingchuang-sentry.exe", "明窗.exe",
         // svchost (太大,但杀了系统就挂)
         "svchost.exe", "csrss.exe", "lsass.exe", "wininit.exe", "services.exe",
         "smss.exe", "winlogon.exe", "dwm.exe", "fontdrvhost.exe",

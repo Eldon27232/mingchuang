@@ -1,7 +1,7 @@
 //! 操作快照与还原引擎 (P0 安全地基, v2 支持多种 payload kind)
 //!
 //! 目录结构:
-//!   %LOCALAPPDATA%\kuake-fuckyou\snapshots\<id>\
+//!   %LOCALAPPDATA%\mingchuang\snapshots\<id>\
 //!   ├── manifest.json     元数据
 //!   └── payload.<ext>     按动作类型: registry.json / service.json / task.xml / process.json
 
@@ -41,7 +41,7 @@ pub fn snapshots_root() -> PathBuf {
     let local = std::env::var("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."));
-    local.join("kuake-fuckyou").join("snapshots")
+    local.join("mingchuang").join("snapshots")
 }
 
 pub fn new_snapshot_id() -> String {

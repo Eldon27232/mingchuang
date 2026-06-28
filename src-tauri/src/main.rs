@@ -2,5 +2,5 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 fn main() {
-    kuake_fuckyou_lib::run()
+    mingchuang_lib::run()
 }

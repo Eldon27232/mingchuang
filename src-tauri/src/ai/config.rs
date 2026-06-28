@@ -1,4 +1,4 @@
-//! AI 配置 (API key 等), 存 %APPDATA%\kuake-fuckyou\ai-config.json
+//! AI 配置 (API key 等), 存 %APPDATA%\mingchuang\ai-config.json
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -37,7 +37,7 @@ pub fn config_path() -> PathBuf {
     let dir = std::env::var("APPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."));
-    dir.join("kuake-fuckyou").join("ai-config.json")
+    dir.join("mingchuang").join("ai-config.json")
 }
 
 pub fn load() -> AiConfig {

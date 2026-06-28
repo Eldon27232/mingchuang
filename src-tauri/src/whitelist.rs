@@ -38,8 +38,8 @@ const PROTECTED_REGISTRY_PREFIXES: &[&str] = &[
     // 用户账户
     r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\ProfileList",
     // 本工具自己 (防止画像不小心删工具本体)
-    r"HKLM\SOFTWARE\com.kuake.fuckyou",
-    r"HKCU\Software\com.kuake.fuckyou",
+    r"HKLM\SOFTWARE\com.mingchuang.app",
+    r"HKCU\Software\com.mingchuang.app",
 ];
 
 /// 精确匹配(不是前缀)的禁删路径 — 防止 target 末尾空 CLSID 等场景删整棵子树

@@ -69,7 +69,7 @@ fn ensure_extracted() -> Result<&'static Path> {
         let head = sfta_patched().as_bytes().iter().take(16).copied().map(u32::from).sum::<u32>();
         (sfta_patched().len() as u32).wrapping_mul(2654435761).wrapping_add(head)
     };
-    let path = std::env::temp_dir().join(format!("kuake-fuckyou-sfta-{:08x}.ps1", fp));
+    let path = std::env::temp_dir().join(format!("mingchuang-sfta-{:08x}.ps1", fp));
 
     let need_write = match std::fs::metadata(&path) {
         Ok(m) if m.len() as usize == sfta_patched().len() => false,
@@ -231,7 +231,7 @@ mod tests {
         // 真机批量端到端: 3 个废扩展名跑完整路径, 校验 UserChoice 真锁住。
         // 性能基线 (Win11 24H2): 3 ext ~1.3s, 15 ext ~2.3s, 30 ext 约 4-5s
         let exts: Vec<String> = (1..=3).map(|i| format!(".kkrust{i}")).collect();
-        let progid = "KuakeFuckyou.RustSmoke";
+        let progid = "Mingchuang.RustSmoke";
 
         let cls = format!("Software\\Classes\\{progid}");
         let k = CURRENT_USER.create(&cls).expect("create ProgId");

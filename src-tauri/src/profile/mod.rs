@@ -113,7 +113,7 @@ pub fn load_profiles() -> Result<Vec<Profile>> {
     let mut out = Vec::new();
     let mut seen_ids = std::collections::HashSet::new();
 
-    // 1. 优先磁盘:%LOCALAPPDATA%\kuake-fuckyou\profiles 给用户覆盖/扩展用
+    // 1. 优先磁盘:%LOCALAPPDATA%\mingchuang\profiles 给用户覆盖/扩展用
     let user_dir = user_profiles_dir();
     if user_dir.is_dir() {
         if let Ok(entries) = std::fs::read_dir(&user_dir) {
@@ -166,5 +166,5 @@ fn user_profiles_dir() -> PathBuf {
     let local = std::env::var("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."));
-    local.join("kuake-fuckyou").join("profiles")
+    local.join("mingchuang").join("profiles")
 }

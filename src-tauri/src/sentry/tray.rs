@@ -105,7 +105,7 @@ unsafe extern "system" fn wnd_proc(
                         // 启动 GUI exe (假设在同目录)
                         if let Ok(exe) = std::env::current_exe() {
                             if let Some(dir) = exe.parent() {
-                                let gui = dir.join("kuake-fuckyou.exe");
+                                let gui = dir.join("mingchuang.exe");
                                 if gui.is_file() {
                                     let _ = crate::sys_cmd_local::cmd(gui.to_str().unwrap_or_default()).spawn();
                                 }

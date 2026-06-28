@@ -370,18 +370,18 @@ fn handle_pending_action(action: &state_io::PendingAction) {
 
 // ============ 巡检 / 偷改告警 ============
 
-fn run_full_inspection() -> Vec<kuake_fuckyou_lib::inspection::ChangeEvent> {
-    let curr = match kuake_fuckyou_lib::inspection::scan_full() {
+fn run_full_inspection() -> Vec<mingchuang_lib::inspection::ChangeEvent> {
+    let curr = match mingchuang_lib::inspection::scan_full() {
         Ok(s) => s,
         Err(e) => {
             eprintln!("[sentry] 定时巡检扫描失败: {e:#}");
             return Vec::new();
         }
     };
-    let baseline = kuake_fuckyou_lib::inspection::load_baseline().unwrap_or_default();
-    let diff = kuake_fuckyou_lib::inspection::diff(&baseline, &curr);
+    let baseline = mingchuang_lib::inspection::load_baseline().unwrap_or_default();
+    let diff = mingchuang_lib::inspection::diff(&baseline, &curr);
     // 把当前快照写回 baseline (这次的 curr = 下次的 baseline)
-    if let Err(e) = kuake_fuckyou_lib::inspection::save_baseline(&curr) {
+    if let Err(e) = mingchuang_lib::inspection::save_baseline(&curr) {
         eprintln!("[sentry] 保存 inspection baseline 失败: {e:#}");
     }
     diff
@@ -389,25 +389,25 @@ fn run_full_inspection() -> Vec<kuake_fuckyou_lib::inspection::ChangeEvent> {
 
 /// 偷改告警: 跟 baseline 比, 但不更新 baseline (只有定时巡检会更新)
 /// — 这样用户没点"立即巡检"或"接受变化"前, 同一个偷改会持续告 (按 60s 节流)
-fn run_tamper_check() -> Vec<kuake_fuckyou_lib::inspection::ChangeEvent> {
-    let curr = match kuake_fuckyou_lib::inspection::scan_quick() {
+fn run_tamper_check() -> Vec<mingchuang_lib::inspection::ChangeEvent> {
+    let curr = match mingchuang_lib::inspection::scan_quick() {
         Ok(s) => s,
         Err(e) => {
             eprintln!("[sentry] 偷改快查失败: {e:#}");
             return Vec::new();
         }
     };
-    let baseline = match kuake_fuckyou_lib::inspection::load_baseline() {
+    let baseline = match mingchuang_lib::inspection::load_baseline() {
         Some(b) => b,
         None => {
             // 没有 baseline = 还没第一次定时巡检过, 无对比基准, 静默
             return Vec::new();
         }
     };
-    kuake_fuckyou_lib::inspection::diff(&baseline, &curr)
+    mingchuang_lib::inspection::diff(&baseline, &curr)
 }
 
-fn fire_inspection_toast(title: &str, ev: &kuake_fuckyou_lib::inspection::ChangeEvent) {
+fn fire_inspection_toast(title: &str, ev: &mingchuang_lib::inspection::ChangeEvent) {
     eprintln!("[sentry] {title}: {}", ev.label);
     let _ = notify::show_toast(title, &ev.label);
 }

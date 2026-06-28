@@ -7,7 +7,7 @@
   "tested_on": {
     "windows": "Windows 11 Pro for Workstations 10.0.26200",
     "date": "2026-06-27",
-    "verified_by": "kuake-fuckyou/scripts/diagnostics/scan-processes.ps1 (6 个进程在跑) + Get-AuthenticodeSignature"
+    "verified_by": "mingchuang/scripts/diagnostics/scan-processes.ps1 (6 个进程在跑) + Get-AuthenticodeSignature"
   },
   "fingerprints": {
     "code_sign_subjects": [

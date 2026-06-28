@@ -73,5 +73,5 @@ pub fn run() {
             commands::sentry_list_inspection_events,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running kuake-fuckyou");
+        .expect("error while running mingchuang");
 }

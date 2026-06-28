@@ -1,8 +1,8 @@
 //! 注册自定义 ProgId 到 HKCU\Software\Classes
 //!
-//! ProgId 格式: `KuakeFuckyou.<stem>`
+//! ProgId 格式: `Mingchuang.<stem>`
 //! 注册项:
-//!   (默认) = "<stem> 文件 (kuake-fuckyou)"
+//!   (默认) = "<stem> 文件 (mingchuang)"
 //!   DefaultIcon\(默认) = "<exe>,0"
 //!   shell\open\command\(默认) = "\"<exe>\" \"%1\""
 
@@ -23,13 +23,13 @@ pub fn register(exe_path: &Path) -> Result<String> {
     if stem.is_empty() {
         return Err(anyhow::anyhow!("exe 文件名清理后为空: {stem_raw}"));
     }
-    let progid = format!("KuakeFuckyou.{stem}");
+    let progid = format!("Mingchuang.{stem}");
     let base = format!("Software\\Classes\\{progid}");
 
     let root = CURRENT_USER
         .create(&base)
         .with_context(|| format!("创建 {base} 失败"))?;
-    root.set_string("", &format!("{stem_raw} 文件 (kuake-fuckyou)"))
+    root.set_string("", &format!("{stem_raw} 文件 (mingchuang)"))
         .context("写 ProgId 显示名失败")?;
 
     let icon = CURRENT_USER

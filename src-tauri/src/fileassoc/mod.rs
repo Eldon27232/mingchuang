@@ -1,7 +1,7 @@
 //! 文件关联管理 - 把一组扩展名的默认打开方式设给某个 exe
 //!
 //! 当前实现 (2026-06-28, sidecar 方案):
-//! 1. 注册自定义 ProgId 到 HKCU\Software\Classes\KuakeFuckyou.<stem>
+//! 1. 注册自定义 ProgId 到 HKCU\Software\Classes\Mingchuang.<stem>
 //! 2. 把该 ProgId 写入每个 ext 的 OpenWithProgids (让"打开方式"菜单里出现)
 //! 3. 调 PS-SFTA (Set-FTA) 强制写 UserChoice + 微软认可的 Hash, 真正锁定默认
 //! 4. 回读 UserChoice 验证成功; 失败才回退到"need_manual"

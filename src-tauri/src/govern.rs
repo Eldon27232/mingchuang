@@ -324,7 +324,7 @@ fn adhoc_profile(actions: Vec<Action>) -> Profile {
     Profile {
         id: "govern-adhoc".into(),
         name: "治理 临时动作".into(),
-        vendor: "kuake-fuckyou".into(),
+        vendor: "mingchuang".into(),
         category: "other".into(),
         severity: "high".into(),
         tested_on: None,

@@ -157,7 +157,7 @@ fn scan_userchoice() -> Vec<UserChoiceEntry> {
     let manifest = crate::fileassoc::manifest::load();
     let mut out = Vec::new();
     for app in &manifest.apps {
-        // ProgId 形如 KuakeFuckyou.<stem>, 重新算一遍 (跟 progid::register 一致)
+        // ProgId 形如 Mingchuang.<stem>, 重新算一遍 (跟 progid::register 一致)
         let exe_stem = std::path::Path::new(&app.exe_path)
             .file_stem()
             .and_then(|s| s.to_str())
@@ -169,7 +169,7 @@ fn scan_userchoice() -> Vec<UserChoiceEntry> {
         if cleaned.is_empty() {
             continue;
         }
-        let expected = format!("KuakeFuckyou.{cleaned}");
+        let expected = format!("Mingchuang.{cleaned}");
         for ext in &app.extensions {
             let path = format!(
                 "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\{ext}\\UserChoice"
@@ -274,7 +274,7 @@ pub fn baseline_path() -> PathBuf {
     let base = std::env::var("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."));
-    base.join("kuake-fuckyou")
+    base.join("mingchuang")
         .join("sentry")
         .join("inspection-baseline.json")
 }

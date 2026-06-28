@@ -13,7 +13,7 @@ fn main() {
         && std::env::var("PROFILE").as_deref() == Ok("release")
     {
         println!(
-            "cargo:rustc-link-arg-bin=kuake-fuckyou=/MANIFESTUAC:level='requireAdministrator' uiAccess='false'"
+            "cargo:rustc-link-arg-bin=mingchuang=/MANIFESTUAC:level='requireAdministrator' uiAccess='false'"
         );
     }
     tauri_build::build()

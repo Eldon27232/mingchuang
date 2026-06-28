@@ -42,12 +42,12 @@ pub struct InspectionLogEntry {
     pub detail: String,
 }
 
-pub fn append_inspection(ev: &kuake_fuckyou_lib::inspection::ChangeEvent) -> Result<()> {
+pub fn append_inspection(ev: &mingchuang_lib::inspection::ChangeEvent) -> Result<()> {
     let entry = InspectionLogEntry {
         ts: ev.ts.to_rfc3339(),
         kind: match ev.kind {
-            kuake_fuckyou_lib::inspection::ChangeKind::Added => "added".into(),
-            kuake_fuckyou_lib::inspection::ChangeKind::UserChoiceLost => "userchoice_lost".into(),
+            mingchuang_lib::inspection::ChangeKind::Added => "added".into(),
+            mingchuang_lib::inspection::ChangeKind::UserChoiceLost => "userchoice_lost".into(),
         },
         category: ev.category.clone(),
         label: ev.label.clone(),

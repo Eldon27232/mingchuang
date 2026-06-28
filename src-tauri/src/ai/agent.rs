@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 const MAX_TOKENS: u32 = 4096;
-const SYSTEM_PROMPT: &str = r#"你是 kuake-fuckyou 内置的 Windows 治理 AI 助手, 帮用户清理国产流氓软件。
+const SYSTEM_PROMPT: &str = r#"你是 mingchuang 内置的 Windows 治理 AI 助手, 帮用户清理国产流氓软件。
 
 工作原则:
 1. 先用 query_* 只读工具诊断 (扫描进程/服务/命名空间/注册表), 不要瞎调破坏性工具
@@ -41,7 +41,7 @@ const SYSTEM_PROMPT: &str = r#"你是 kuake-fuckyou 内置的 Windows 治理 AI 
 
 对话用简体中文, 行动前简要说明计划。"#;
 
-const REVIEWER_PROMPT: &str = r#"你是 kuake-fuckyou 的安全审查员。Executor 想调用一个破坏性工具,
+const REVIEWER_PROMPT: &str = r#"你是 mingchuang 的安全审查员。Executor 想调用一个破坏性工具,
 你的任务是判断:
 - safe: 完全安全, 可以直接执行 (例: 删除已知国产流氓的注册表项 / 停掉其服务)
 - needs_approval: 风险存在,需要让用户确认 (例: 杀进程, 操作不熟悉的服务名)
@@ -93,7 +93,7 @@ fn sessions_dir() -> PathBuf {
     let local = std::env::var("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."));
-    local.join("kuake-fuckyou").join("ai-sessions")
+    local.join("mingchuang").join("ai-sessions")
 }
 
 fn session_file(id: &str) -> PathBuf {
