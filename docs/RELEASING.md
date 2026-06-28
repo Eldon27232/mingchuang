@@ -18,6 +18,18 @@
 
 签名通过环境变量 `TAURI_SIGNING_PRIVATE_KEY` 传给 build, 见下面。
 
+## ⚠ WiX UpgradeCode (绝对不能改)
+
+`bundle.windows.wix.upgradeCode = 25C0E97E-79F1-4F17-AC1A-CE898C3851AB`
+
+Tauri 默认根据 `<exe名>.exe` 哈希算 UpgradeCode, **任何时候改了 Rust binary 名
+(Cargo.toml [[bin]] name) UpgradeCode 都会变 — 新装包不再当成升级而是并行装,
+开始菜单出现两份"明窗", 用户哭着来找你**。v0.0.1 就因为 rename 前后 bin 名
+从 kuake-fuckyou 改成 mingchuang 撞过这个坑, 从 v0.0.7 起锁死这个 UUID。
+
+如果不得不换 UpgradeCode (比如真要大版本切产品线), 老用户必须手动卸载老版,
+不然永远并行。
+
 ---
 
 ## 每次发版步骤
