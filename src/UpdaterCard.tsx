@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 
 type Phase = "idle" | "checking" | "uptodate" | "available" | "downloading" | "installing" | "ready" | "error";
 
@@ -40,6 +41,15 @@ export function UpdaterCard() {
     let downloaded = 0;
     let total = 0;
     try {
+      // 先停 sentry, 否则 .msi 替换 mingchuang-sentry.exe 时文件占用 → 安装失败
+      // (用户反馈: "更新时如果守护还开着会出 bug 没法关掉也没法再打开")
+      try {
+        await invoke("sentry_stop");
+        // 给 sentry 主循环 2.5s 消化 stop_requested + Win 释放 exe 句柄
+        await new Promise((r) => setTimeout(r, 2500));
+      } catch {
+        // sentry 没在跑就忽略, 不阻塞更新
+      }
       await update.downloadAndInstall((event) => {
         switch (event.event) {
           case "Started":

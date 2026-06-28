@@ -294,24 +294,18 @@ export function AiPanel() {
       )}
 
       <div className="ai-log" ref={logRef}>
-        {groupMessages(session?.messages ?? []).map((seg, segIdx) => {
-          if (seg.kind === "burst") {
-            return <ToolBurstView key={segIdx} entries={seg.entries} />;
-          }
-          const i = seg.idx;
-          return (
-            <MessageView
-              key={i} m={seg.msg} index={i}
-              onEdit={startEdit}
-              onRetry={i === lastAssistantIdx && !isRunning && !isWaiting ? retry : undefined}
-              editing={editingIndex === i}
-              editingText={editingText}
-              setEditingText={setEditingText}
-              onSubmitEdit={submitEdit}
-              onCancelEdit={cancelEdit}
-            />
-          );
-        })}
+        {(session?.messages ?? []).map((m, i) => (
+          <MessageView
+            key={i} m={m} index={i}
+            onEdit={startEdit}
+            onRetry={i === lastAssistantIdx && !isRunning && !isWaiting ? retry : undefined}
+            editing={editingIndex === i}
+            editingText={editingText}
+            setEditingText={setEditingText}
+            onSubmitEdit={submitEdit}
+            onCancelEdit={cancelEdit}
+          />
+        ))}
         {session?.last_error && <div className="ai-msg err">⚠ {session.last_error}</div>}
         {isRunning && (
           <div className="ai-msg assistant thinking">
@@ -339,88 +333,6 @@ export function AiPanel() {
           <button onClick={send} disabled={!input.trim() || !config?.api_key}>发送</button>
         )}
       </div>
-    </div>
-  );
-}
-
-// ============ 消息分段 ============
-// 把消息列表分成: "regular" (单条 user / 终答 assistant) 和 "burst" (连续工具调用 assistant).
-// burst 的判定: 连续 ≥2 条 assistant 消息且都带 tool_calls
-type LogSegment =
-  | { kind: "regular"; msg: ChatMessage; idx: number }
-  | { kind: "burst"; entries: Array<{ msg: ChatMessage; idx: number }> };
-
-function groupMessages(msgs: ChatMessage[]): LogSegment[] {
-  const out: LogSegment[] = [];
-  let i = 0;
-  while (i < msgs.length) {
-    const m = msgs[i];
-    if (m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0) {
-      // 收集连续的 tool-using assistant
-      const entries = [];
-      while (i < msgs.length) {
-        const cur = msgs[i];
-        if (cur.role === "assistant" && cur.tool_calls && cur.tool_calls.length > 0) {
-          entries.push({ msg: cur, idx: i });
-          i++;
-        } else if (cur.role === "tool") {
-          i++; // tool 消息在 MessageView 里本来就 return null, 跳过
-        } else {
-          break;
-        }
-      }
-      if (entries.length >= 2) {
-        out.push({ kind: "burst", entries });
-      } else {
-        // 只有 1 条带 tool_calls 的, 当 regular 渲染 (避免 1 步也包成折叠块)
-        for (const e of entries) out.push({ kind: "regular", msg: e.msg, idx: e.idx });
-      }
-    } else {
-      out.push({ kind: "regular", msg: m, idx: i });
-      i++;
-    }
-  }
-  return out;
-}
-
-function ToolBurstView({ entries }: { entries: Array<{ msg: ChatMessage; idx: number }> }) {
-  const [expanded, setExpanded] = useState(false);
-  const totalCalls = entries.reduce((n, e) => n + (e.msg.tool_calls?.length ?? 0), 0);
-  // 收集所有 tool name 做个 1 行预览
-  const allCalls: ToolCallView[] = entries.flatMap((e) => e.msg.tool_calls ?? []);
-  const preview = allCalls.slice(0, 4).map((c) => humanizeToolCall(c.name, c.args)).join(" / ");
-  const more = allCalls.length > 4 ? ` 等 ${allCalls.length} 步` : "";
-
-  return (
-    <div className="ai-tool-burst">
-      <div className="ai-tool-burst-head" onClick={() => setExpanded(!expanded)}>
-        <span className="caret">{expanded ? "▼" : "▶"}</span>
-        <span className="ai-tool-burst-label">
-          🔧 调了 {totalCalls} 步工具
-          <span className="muted small"> · {preview}{more}</span>
-        </span>
-      </div>
-      {expanded && (
-        <div className="ai-tool-burst-body">
-          {entries.map((e) => (
-            <BurstStep key={e.idx} m={e.msg} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function BurstStep({ m }: { m: ChatMessage }) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const toggle = (id: string) =>
-    setExpanded((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  return (
-    <div className="ai-burst-step">
-      {m.content && (
-        <div className="ai-msg-text"><AssistantMarkdown>{m.content}</AssistantMarkdown></div>
-      )}
-      <ToolCallList calls={m.tool_calls ?? []} expanded={expanded} onToggle={toggle} />
     </div>
   );
 }
@@ -507,10 +419,8 @@ function ToolCallList({
 }) {
   const [burstOpen, setBurstOpen] = useState(false);
   if (calls.length === 0) return null;
-  if (calls.length === 1) {
-    return <ToolCallRow call={calls[0]} expanded={expanded.has(calls[0].id)} onToggle={() => onToggle(calls[0].id)} />;
-  }
-  // ≥2 → 折叠成一条
+  // 永远包成 "调用了 N 次工具" 折叠块 (即使 N=1), 这样思考链 (text) 跟工具调用
+  // 视觉上严格分开, 不会因为单个 tool 而把卡片直接展开
   const preview = calls.slice(0, 3).map((c) => humanizeToolCall(c.name, c.args)).join(" / ");
   const more = calls.length > 3 ? ` 等 ${calls.length} 步` : "";
   const anyFailed = calls.some((c) => c.status === "failed" || c.status === "denied");
