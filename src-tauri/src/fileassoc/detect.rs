@@ -9,8 +9,9 @@
 
 use anyhow::Result;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use windows_registry::{CLASSES_ROOT, CURRENT_USER, LOCAL_MACHINE};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct InstalledApp {
@@ -18,6 +19,10 @@ pub struct InstalledApp {
     pub display_name: String,
     pub category: String,
     pub exe_path: String,
+    /// 是否在 HKLM/HKCU Software\RegisteredApplications 里挂了 Capabilities,
+    /// 即"主动告诉 Windows 我能开某些扩展名"的应用。
+    /// 前端用这个做"仅已注册"筛选 — 这是 Windows 默认应用面板使用的判定口径。
+    pub registered: bool,
 }
 
 fn expand(p: &str) -> Option<PathBuf> {
@@ -97,7 +102,100 @@ const CANDIDATES: &[Candidate] = &[
     ]},
 ];
 
+/// 收集所有"已注册为关联程序"的 exe 路径 (小写)。
+///
+/// Windows 默认应用面板的判定口径: 一个 app 出现在 ms-settings:defaultapps
+/// 里, 就必须满足两条 — (1) 在 HKLM 或 HKCU 的 Software\RegisteredApplications
+/// 里有个名字, (2) 对应 Capabilities 键下声明了 FileAssociations。
+///
+/// 顺着这条链拿 exe:
+///   HKLM/HKCU\Software\RegisteredApplications  (枚举值)
+///     value name = "Adobe Reader DC"
+///     value data = "Software\Adobe\Reader\Capabilities"   (← 指向 Capabilities)
+///   该 Capabilities 键的子键 FileAssociations:
+///     .pdf = "AcroExch.Document.DC"   (← ProgId)
+///   HKCR\AcroExch.Document.DC\shell\open\command\(默认):
+///     "C:\Program Files\Adobe\...\AcroRd32.exe" "%1"   (← 含 exe 路径)
+///
+/// 网络浏览器/邮件客户端在 Software\Clients\... 下有平行结构, 但默认应用面板
+/// 把它们也算"已注册"的一部分。这里**只**走 RegisteredApplications, 因为
+/// Clients\ 那条路径多数应用同时也在 RegisteredApplications 里注册, 不漏。
+fn registered_exe_paths() -> HashSet<String> {
+    let mut out = HashSet::new();
+
+    for root in [LOCAL_MACHINE, CURRENT_USER] {
+        let Ok(reg_apps) = root.open("Software\\RegisteredApplications") else { continue };
+        let Ok(values) = reg_apps.values() else { continue };
+        for (_app_name, val) in values {
+            // value data 是字符串, 形如 "Software\Vendor\App\Capabilities"
+            let cap_path: String = match val.try_into() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            collect_exes_under_capabilities(root, &cap_path, &mut out);
+            collect_exes_under_capabilities(LOCAL_MACHINE, &cap_path, &mut out);
+            collect_exes_under_capabilities(CURRENT_USER, &cap_path, &mut out);
+        }
+    }
+
+    out
+}
+
+fn collect_exes_under_capabilities(
+    hive: &windows_registry::Key,
+    cap_path: &str,
+    out: &mut HashSet<String>,
+) {
+    let cap_key = match hive.open(cap_path) {
+        Ok(k) => k,
+        Err(_) => return,
+    };
+    for sub in ["FileAssociations", "UrlAssociations"] {
+        let Ok(assoc_key) = cap_key.open(sub) else { continue };
+        let Ok(vs) = assoc_key.values() else { continue };
+        for (_ext_or_proto, v) in vs {
+            let progid: String = match v.try_into() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            if let Some(exe) = exe_from_progid(&progid) {
+                out.insert(exe.to_ascii_lowercase());
+            }
+        }
+    }
+}
+
+/// 从 HKCR\<ProgId>\shell\open\command\(默认) 提 exe 绝对路径
+fn exe_from_progid(progid: &str) -> Option<String> {
+    let path = format!("{progid}\\shell\\open\\command");
+    let key = CLASSES_ROOT.open(&path).ok()?;
+    let cmd: String = key.get_value("").ok()?.try_into().ok()?;
+    parse_exe_from_command(&cmd)
+}
+
+/// 从 shell\open\command 的命令串里抠出 exe 路径。
+/// 命令通常是 `"C:\foo\App.exe" "%1"` 或 `C:\foo\App.exe %1` (无空格无引号)。
+fn parse_exe_from_command(cmd: &str) -> Option<String> {
+    let trimmed = cmd.trim();
+    if trimmed.is_empty() { return None; }
+    let exe = if let Some(stripped) = trimmed.strip_prefix('"') {
+        // 引号包裹: 取下一个引号前的内容
+        let end = stripped.find('"')?;
+        stripped[..end].to_string()
+    } else {
+        // 无引号: 取第一个空格前的全部 (假设路径不含空格)
+        let end = trimmed.find(' ').unwrap_or(trimmed.len());
+        trimmed[..end].to_string()
+    };
+    if exe.to_ascii_lowercase().ends_with(".exe") || exe.to_ascii_lowercase().ends_with(".dll") {
+        Some(exe)
+    } else {
+        None
+    }
+}
+
 pub fn detect_installed() -> Vec<InstalledApp> {
+    let registered = registered_exe_paths();
     let mut out: Vec<InstalledApp> = Vec::new();
     let mut seen_paths: HashMap<String, bool> = HashMap::new();
 
@@ -113,6 +211,7 @@ pub fn detect_installed() -> Vec<InstalledApp> {
                             display_name: c.display_name.to_string(),
                             category: c.category.to_string(),
                             exe_path: path.display().to_string(),
+                            registered: false, // 下面统一打标
                         });
                     }
                     break;
@@ -128,6 +227,13 @@ pub fn detect_installed() -> Vec<InstalledApp> {
             if seen_paths.insert(key_path, true).is_none() {
                 out.push(app);
             }
+        }
+    }
+
+    // 3. 给每个 app 打 registered 标 — 一次性查 HashSet, O(1)
+    for app in out.iter_mut() {
+        if registered.contains(&app.exe_path.to_ascii_lowercase()) {
+            app.registered = true;
         }
     }
 
@@ -291,6 +397,7 @@ fn scan_start_menu_apps() -> Result<Vec<InstalledApp>> {
                     display_name,
                     category,
                     exe_path: target,
+                    registered: false, // detect_installed 末尾统一打标
                 });
             }
         }
@@ -390,9 +497,11 @@ mod tests {
     #[ignore]
     fn detect_dump() {
         let apps = super::detect_installed();
-        eprintln!("共检测到 {} 个 app:", apps.len());
+        let reg_count = apps.iter().filter(|a| a.registered).count();
+        eprintln!("共 {} 个 app, 其中 {} 个已注册关联程序:", apps.len(), reg_count);
         for a in &apps {
-            eprintln!("  [{}] {} - {}", a.category, a.display_name, a.exe_path);
+            let tag = if a.registered { "REG" } else { "   " };
+            eprintln!("  {tag} [{}] {} - {}", a.category, a.display_name, a.exe_path);
         }
     }
 

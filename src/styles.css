@@ -108,21 +108,57 @@ body { margin: 0; background: var(--bg); color: var(--fg); -webkit-font-smoothin
   text-transform: uppercase; letter-spacing: 0.5px;
 }
 
-.app-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px;
+/* 默认打开方式 - 应用列表 (旧版用 grid, 新版列表 + 筛选) */
+.app-toolbar {
+  display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap;
 }
-.app-tile {
-  background: var(--panel2); border: 2px solid transparent;
-  padding: 14px 8px; border-radius: 8px; text-align: center;
-  cursor: pointer; transition: all 0.1s;
+.app-filter-seg {
+  display: flex; background: var(--panel2); border-radius: 6px; padding: 3px; gap: 2px;
 }
-.app-tile:hover { border-color: var(--border); }
-.app-tile.selected { border-color: var(--accent); background: #1a2638; }
-.app-tile.add-custom { border-style: dashed; border-color: var(--muted); }
-.app-tile.add-custom:hover { border-color: var(--accent); color: var(--accent); }
-.app-icon { font-size: 28px; margin-bottom: 6px; }
-.app-name { font-size: 12px; word-break: break-all; }
-.app-ext-count { font-size: 10px; color: var(--accent); margin-top: 4px; }
+.seg-btn {
+  background: transparent; border: none; color: var(--text);
+  padding: 6px 12px; border-radius: 4px; cursor: pointer;
+  font-size: 13px; transition: background 0.1s;
+}
+.seg-btn:hover { background: rgba(255,255,255,0.05); }
+.seg-btn.on { background: var(--accent); color: #fff; }
+.seg-btn.on .muted { color: rgba(255,255,255,0.7); }
+.seg-btn.add-btn {
+  background: var(--panel2); margin-left: auto;
+  border: 1px dashed var(--muted);
+}
+.seg-btn.add-btn:hover { border-color: var(--accent); color: var(--accent); }
+.app-search {
+  flex: 1; min-width: 180px; padding: 7px 12px;
+  background: var(--panel2); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text); font-size: 13px;
+}
+.app-search:focus { outline: none; border-color: var(--accent); }
+
+.app-list {
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 420px; overflow-y: auto;
+  background: var(--panel2); border-radius: 8px; padding: 4px;
+}
+.app-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; border-radius: 4px; cursor: pointer;
+  transition: background 0.05s;
+}
+.app-row:hover { background: rgba(255,255,255,0.05); }
+.app-row-icon { font-size: 18px; flex-shrink: 0; }
+.app-row-name { font-size: 13px; font-weight: 500; flex-shrink: 0; }
+.app-row-count { font-size: 11px; color: var(--accent); flex-shrink: 0; }
+.app-row-path {
+  font-size: 11px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; flex: 1; text-align: right;
+}
+.app-badge {
+  font-size: 10px; padding: 2px 6px; border-radius: 10px;
+  background: rgba(99, 179, 237, 0.15); color: var(--accent);
+  border: 1px solid rgba(99, 179, 237, 0.3);
+  flex-shrink: 0; letter-spacing: 0.3px;
+}
 
 /* 恢复条 + 分配清单 */
 .restore-bar {

@@ -20,6 +20,7 @@ interface InstalledApp {
   display_name: string;
   category: string;
   exe_path: string;
+  registered: boolean;
 }
 interface AssocPreset {
   id: string;
@@ -291,6 +292,8 @@ function FileAssocCard({ manifest, refresh }: { manifest: AssocManifest | null; 
   const [presets, setPresets] = useState<AssocPreset[]>([]);
   const [customApps, setCustomApps] = useState<InstalledApp[]>([]);
   const [editing, setEditing] = useState<{ app: InstalledApp; extensions: Set<string> } | null>(null);
+  const [filter, setFilter] = useState<"all" | "registered">("all");
+  const [searchTerm, setSearchTerm] = useState("");
 
   useEffect(() => {
     invoke<InstalledApp[]>("fileassoc_detect_installed_apps").then(setApps);
@@ -304,7 +307,7 @@ function FileAssocCard({ manifest, refresh }: { manifest: AssocManifest | null; 
       const exePath = picked as string;
       const nameWithExt = exePath.split(/[\\/]/).pop() || exePath;
       const stem = nameWithExt.replace(/\.exe$/i, "");
-      const custom: InstalledApp = { key: `custom:${exePath}`, display_name: stem, category: "custom", exe_path: exePath };
+      const custom: InstalledApp = { key: `custom:${exePath}`, display_name: stem, category: "custom", exe_path: exePath, registered: false };
       setCustomApps((arr) => arr.find((a) => a.exe_path === exePath) ? arr : [...arr, custom]);
       openEditFor(custom);
     } catch (e) { alert(`选择失败: ${e}`); }
@@ -327,26 +330,73 @@ function FileAssocCard({ manifest, refresh }: { manifest: AssocManifest | null; 
     appExtMap[app.exe_path] = app.extensions;
   }
 
+  const registeredCount = allApps.filter((a) => a.registered).length;
+  const filteredApps = allApps.filter((a) => {
+    if (filter === "registered" && !a.registered) return false;
+    if (searchTerm) {
+      const q = searchTerm.toLowerCase();
+      if (!a.display_name.toLowerCase().includes(q) && !a.exe_path.toLowerCase().includes(q)) {
+        return false;
+      }
+    }
+    return true;
+  });
+
   return (
     <div className="hero-card assoc-hero">
       <div className="hero-title">默认打开方式</div>
       <div className="hero-sub">选个应用,把视频/音乐/图片等文件类型分配给它</div>
 
-      <div className="app-grid">
-        {allApps.map((a) => {
+      <div className="app-toolbar">
+        <div className="app-filter-seg">
+          <button
+            className={filter === "all" ? "seg-btn on" : "seg-btn"}
+            onClick={() => setFilter("all")}
+          >
+            全部应用 <span className="muted small">({allApps.length})</span>
+          </button>
+          <button
+            className={filter === "registered" ? "seg-btn on" : "seg-btn"}
+            onClick={() => setFilter("registered")}
+            title="只显示主动告诉 Windows '我能开某些文件' 的应用 (出现在 Windows 默认应用面板里的那一批)"
+          >
+            主动注册关联程序 <span className="muted small">({registeredCount})</span>
+          </button>
+        </div>
+        <input
+          className="app-search"
+          type="text"
+          placeholder="搜索应用名或路径..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+        <button className="seg-btn add-btn" onClick={pickCustomExe} title="从文件管理器挑一个 exe">
+          ＋ 添加其他应用
+        </button>
+      </div>
+
+      <div className="app-list">
+        {filteredApps.length === 0 && (
+          <div className="muted small" style={{ padding: "20px", textAlign: "center" }}>
+            {filter === "registered"
+              ? `当前筛选下没有应用。"主动注册"是 Windows 默认应用面板使用的口径, 像 7-Zip / VLC / mpv 这种便携工具通常不在这里注册, 切到"全部应用"看完整列表。`
+              : searchTerm
+                ? `没有匹配 "${searchTerm}" 的应用`
+                : "没有检测到任何应用"}
+          </div>
+        )}
+        {filteredApps.map((a) => {
           const exts = appExtMap[a.exe_path] || [];
           return (
-            <div key={a.key} className="app-tile" onClick={() => openEditFor(a)} title={a.exe_path}>
-              <div className="app-icon">{CAT_ICON[a.category] || "🛠️"}</div>
-              <div className="app-name">{a.display_name}</div>
-              {exts.length > 0 && <div className="app-ext-count">{exts.length} 种文件</div>}
+            <div key={a.key} className="app-row" onClick={() => openEditFor(a)} title={a.exe_path}>
+              <span className="app-row-icon">{CAT_ICON[a.category] || "🛠️"}</span>
+              <span className="app-row-name">{a.display_name}</span>
+              {a.registered && <span className="app-badge" title="主动在 RegisteredApplications 注册了关联程序">已注册</span>}
+              {exts.length > 0 && <span className="app-row-count">{exts.length} 种文件</span>}
+              <span className="app-row-path muted small">{a.exe_path}</span>
             </div>
           );
         })}
-        <div className="app-tile add-custom" onClick={pickCustomExe} title="从文件管理器挑一个 exe">
-          <div className="app-icon">＋</div>
-          <div className="app-name">添加其他应用</div>
-        </div>
       </div>
 
       {/* 当前用户的分配清单 */}
