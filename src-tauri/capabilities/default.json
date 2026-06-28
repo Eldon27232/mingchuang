@@ -8,6 +8,9 @@
     "core:window:default",
     "core:webview:default",
     "core:app:default",
-    "dialog:default"
+    "dialog:default",
+    "updater:default",
+    "process:default",
+    "process:allow-restart"
   ]
 }

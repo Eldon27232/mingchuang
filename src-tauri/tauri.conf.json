@@ -30,11 +30,23 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Eldon27232/mingchuang/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM4OUJFODlENzJERkFGRTAKUldUZ3I5OXluZWlieU9DSzlUaXl6bzhnNmZyUStnTDBOWkZyTUtORmV4T3FaMmpJbGI5TzZvSUUK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

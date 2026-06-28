@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { humanizeAction } from "./labels";
+import { UpdaterCard } from "./UpdaterCard";
 
 interface ScenarioStats {
   pending: number;
@@ -230,6 +231,9 @@ export function GovernPanel() {
           <SimpleCard title="关掉国产软件的后台" stats={ka} busy={busy === "govern_stop_keepalive"} runLabel="关掉这些后台" onRun={() => runOne("govern_stop_keepalive")} />
         </div>
       )}
+
+      {/* 应用更新 */}
+      <UpdaterCard />
 
       {/* 历史 */}
       <div className="history-toggle" onClick={() => setShowUndo(!showUndo)}>↶ 历史操作 ({snapshots.length})</div>

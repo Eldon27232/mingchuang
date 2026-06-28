@@ -427,3 +427,44 @@ code { font-family: Consolas, monospace; background: var(--panel2); padding: 2px
   background: var(--panel2); color: var(--fg); border: 1px solid var(--border);
 }
 .modal-buttons .btn-exec { background: var(--accent); border-color: var(--accent); color: white; }
+
+/* ============ Updater Card ============ */
+.updater-card {
+  margin-top: 16px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 16px;
+}
+.updater-row {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.updater-label { color: var(--muted); font-size: 12px; }
+.updater-version { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 13px; }
+.updater-ok { color: var(--ok); font-size: 12px; }
+.updater-new { color: var(--accent2); font-size: 12px; font-weight: 500; }
+.updater-err { color: var(--danger); font-size: 12px; }
+.updater-progress { font-size: 12px; color: var(--muted); flex: 1; }
+.updater-btn {
+  padding: 4px 12px; border-radius: 4px; cursor: pointer;
+  font-family: inherit; font-size: 12px;
+  background: var(--panel2); color: var(--fg); border: 1px solid var(--border);
+}
+.updater-btn:hover { border-color: var(--accent); color: var(--accent); }
+.updater-btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.updater-btn.primary:hover { filter: brightness(1.1); color: #fff; }
+.updater-btn.ghost { background: transparent; }
+.updater-notes {
+  margin-top: 10px; padding: 10px 12px;
+  background: var(--panel2); border-radius: 6px;
+  max-height: 160px; overflow-y: auto;
+}
+.updater-notes-title { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.updater-notes pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; font-family: inherit; }
+.updater-bar {
+  margin-top: 8px; height: 4px; background: var(--panel2); border-radius: 2px; overflow: hidden;
+}
+.updater-bar-fill { height: 100%; background: var(--accent); transition: width 0.2s; }
+.updater-err-msg {
+  margin-top: 8px; padding: 8px 10px; background: rgba(239, 68, 68, 0.1);
+  border-radius: 4px; color: var(--danger); font-size: 11px;
+  font-family: ui-monospace, Consolas, monospace; word-break: break-all;
+}
