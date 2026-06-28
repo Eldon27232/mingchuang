@@ -1,7 +1,7 @@
 {
   "id": "baidu-netdisk",
   "name": "百度网盘",
-  "vendor": "百度",
+  "vendor": "Beijing Duyou Science and Technology Co.,Ltd.(百度子公司度友)",
   "category": "netdisk",
   "severity": "high",
   "tested_on": {
@@ -10,8 +10,18 @@
     "verified_by": "本机手工实测"
   },
   "fingerprints": {
+    "code_sign_subjects": [
+      "Beijing Duyou Science and Technology Co.,Ltd."
+    ],
+    "clsids": [
+      "{679F137C-3162-45da-BE3C-2F9C3D093F64}"
+    ],
     "install_paths": [
       "%APPDATA%\\baidu\\BaiduNetdisk"
+    ],
+    "install_path_keywords": [
+      "\\baidu\\BaiduNetdisk\\",
+      "\\BaiduNetdisk\\"
     ],
     "process_names": [
       "BaiduNetdisk.exe",
@@ -19,9 +29,6 @@
     ],
     "service_names": [
       "BaiduNetdiskUtility"
-    ],
-    "clsids": [
-      "{679F137C-3162-45da-BE3C-2F9C3D093F64}"
     ],
     "registry_keys": [
       "HKCU\\Software\\Baidu\\BaiduNetdisk",
@@ -59,23 +66,9 @@
     }
   ],
   "verify": [
-    {
-      "kind": "reg-not-exists",
-      "target": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\{679F137C-3162-45da-BE3C-2F9C3D093F64}",
-      "description": "命名空间项已不存在"
-    },
-    {
-      "kind": "reg-not-exists",
-      "target": "HKCU\\Software\\Classes\\CLSID\\{679F137C-3162-45da-BE3C-2F9C3D093F64}",
-      "description": "CLSID 本体已清除"
-    },
-    {
-      "kind": "service-state",
-      "target": "BaiduNetdiskUtility",
-      "expect_start_mode": "Disabled",
-      "expect_state_in": ["Stopped"],
-      "description": "utility 服务已禁用"
-    }
+    { "kind": "reg-not-exists", "target": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\{679F137C-3162-45da-BE3C-2F9C3D093F64}", "description": "命名空间项已不存在" },
+    { "kind": "reg-not-exists", "target": "HKCU\\Software\\Classes\\CLSID\\{679F137C-3162-45da-BE3C-2F9C3D093F64}", "description": "CLSID 本体已清除" },
+    { "kind": "service-state", "target": "BaiduNetdiskUtility", "expect_start_mode": "Disabled", "expect_state_in": ["Stopped"], "description": "utility 服务已禁用" }
   ],
-  "notes": "百度网盘的『此电脑』伪文件夹特征是右键没有删除项(因为是 NameSpace 注册,不是真文件)。CLSID 注册在 HKCU 用户级,清理无需管理员。BaiduNetdiskUtility 服务默认 Manual,通常不在跑。"
+  "notes": "证书主体『Beijing Duyou Science and Technology Co.,Ltd.』(度友科技)是百度全资子公司, 专门做百度网盘客户端。DigiCert 签发, 非 EV (无 SerialNumber 字段)。伪文件夹特征是右键没有删除项 (NameSpace 注册, 不是真文件)。BaiduNetdiskUtility 服务默认 Manual。"
 }

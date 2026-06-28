@@ -315,7 +315,7 @@ $buf = New-Object System.Text.StringBuilder
 function W([string]$s,[ConsoleColor]$c='Gray') { Write-Host $s -ForegroundColor $c; [void]$buf.AppendLine($s) }
 
 W ("=" * 80) Cyan
-W ("kuake-fuckyou / 进程分类扫描   {0:yyyy-MM-dd HH:mm:ss}" -f (Get-Date)) Cyan
+W ("mingchuang / 进程分类扫描   {0:yyyy-MM-dd HH:mm:ss}" -f (Get-Date)) Cyan
 W ("画像档案: {0} 份,指纹命中进程名 {1} 个" -f $profiles.Count, $profileHits.Count) DarkGray
 W ("=" * 80) Cyan
 W ""
