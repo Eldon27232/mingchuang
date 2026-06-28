@@ -443,9 +443,15 @@ function EditAssocModal({ app, initialExtensions, presets, manifest, onCancel, o
         exePath: app.exe_path,
         extensions: extsArr,
       });
-      // 上次自动写 UserChoice hash 把用户的关联搞重置了, 本 commit 回退到稳妥的
-      // OpenWithProgids + 系统设置手动确认, 等下一轮接 SetUserFTA.exe sidecar 再做"全自动"
-      setResultSummary(`已把 ${app.display_name} 加进 Windows 的"打开方式"选项 (${single.extensions_set.length} 种文件类型)。现在跳到系统设置, 你点一下 ${app.display_name} 就生效。`);
+      // PS-SFTA sidecar 强制锁定 UserChoice, 大多数情况 need_manual 为空 → 全自动。
+      // 只有 UCPD.sys 保护的 http/https/.pdf 或 PowerShell 不可用时才会回退到手动。
+      const ok = single.extensions_set.length;
+      const manual = single.extensions_need_manual.length;
+      if (manual === 0) {
+        setResultSummary(`已把 ${app.display_name} 设为默认打开方式 (${ok} 种文件类型)。双击文件直接用 ${app.display_name} 打开, 没有任何手动步骤。`);
+      } else {
+        setResultSummary(`${ok} 种文件类型已锁定到 ${app.display_name}; 另有 ${manual} 种 Windows 拦截了自动写入 (通常是 .pdf 或 http/https), 需要在系统设置里手动点一下。`);
+      }
       setNeedManual(single.extensions_need_manual);
       void result;
     } catch (e) {
@@ -483,7 +489,7 @@ function EditAssocModal({ app, initialExtensions, presets, manifest, onCancel, o
           ) : (
             <>
               <p className="muted small">
-                这几种 Windows 系统版本不接受我们的哈希算法(可能 Win11 太新或太老):
+                这几种文件被 Windows 自身保护机制 (UCPD.sys) 拦了自动写入, 需要在系统设置里手动选一下:
               </p>
               <div className="ext-grid">
                 {needManual.map((e, i) => (

@@ -1,23 +1,26 @@
 //! 文件关联管理 - 把一组扩展名的默认打开方式设给某个 exe
 //!
-//! MVP 实现(2026-06-27):
-//! 1. 注册自定义 ProgId 到 HKCU\Software\Classes\kuake-fuckyou.<stem>
-//! 2. 把该 ProgId 写入每个 ext 的 OpenWithProgids
-//! 3. 清除现有 UserChoice(让系统下次从 OpenWithProgids 选)
-//! 4. SHChangeNotify(SHCNE_ASSOCCHANGED) 通知 Shell 刷新
+//! 当前实现 (2026-06-28, sidecar 方案):
+//! 1. 注册自定义 ProgId 到 HKCU\Software\Classes\KuakeFuckyou.<stem>
+//! 2. 把该 ProgId 写入每个 ext 的 OpenWithProgids (让"打开方式"菜单里出现)
+//! 3. 调 PS-SFTA (Set-FTA) 强制写 UserChoice + 微软认可的 Hash, 真正锁定默认
+//! 4. 回读 UserChoice 验证成功; 失败才回退到"need_manual"
+//! 5. SHChangeNotify 通知 Shell 刷新
 //!
-//! 局限:UserChoice 的精确哈希锁定下一轮再做(打包 SetUserFTA 或自写哈希)。
-//! 本机实测 reg 写入完成后,首次打开此类文件 Windows 会弹"打开方式",选我们 ProgId 即生效。
+//! 历史:
+//! - 73558d6 自己 port hash 算法 → 算错, Win11 把整个 UserChoice 清掉, 用户原关联丢失
+//! - 1eaa94b 紧急退回 OpenWithProgids + 手动兜底 (用户明确否决: 不接受手动)
+//! - 本 commit 接入 PS-SFTA, 全自动且不再自算 hash
 
 pub mod detect;
 pub mod manifest;
 pub mod presets;
 pub mod progid;
-pub mod userchoice;
+pub mod sfta;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use windows_registry::CURRENT_USER;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,11 +34,11 @@ pub struct AssocPreset {
 pub struct AssocResult {
     pub exe: String,
     pub progid: String,
-    /// 这些扩展名 OpenWithProgids + Hash 双写都成功(真正强制锁定)
+    /// OpenWithProgids + UserChoice Hash 双写都成功, 真正强制锁定
     pub extensions_set: Vec<String>,
     pub extensions_failed: Vec<(String, String)>,
-    /// 这些扩展名 OpenWithProgids 成功但 UserChoice Hash 写入被 Windows 拒(算法可能本机版本不兼容,
-    /// 需要兜底走系统设置)
+    /// OpenWithProgids 成功但 Set-FTA 失败 (极少数情况, 如 UCPD.sys 保护 http/.pdf),
+    /// 需要兜底走系统设置
     pub extensions_need_manual: Vec<String>,
 }
 
@@ -61,7 +64,6 @@ pub fn set_app_defaults(exe_path: &str, extensions: &[String]) -> Result<AssocRe
     let mut extensions_failed = Vec::new();
     let mut extensions_need_manual = Vec::new();
 
-    // 去重 + 校验
     let mut seen = std::collections::HashSet::new();
     for raw_ext in extensions {
         let ext = normalize_ext(raw_ext);
@@ -72,26 +74,24 @@ pub fn set_app_defaults(exe_path: &str, extensions: &[String]) -> Result<AssocRe
         if !seen.insert(ext.clone()) {
             continue;
         }
-        // 只写 OpenWithProgids — UserChoice hash 算法在不同 Windows 版本不一样,
-        // 自己算容易写错 Hash 导致 Windows 把整个 UserChoice 键清掉, 反而把用户原来的
-        // 设置也搞丢。**这次教训**: 必须用经过验证的 SetUserFTA.exe sidecar, 不自己算。
-        //
-        // 这一 commit 暂时关掉 force_set_user_choice, 改回 OpenWithProgids + 手动兜底,
-        // 等下一轮打包 SetUserFTA.exe 再开。
-        match associate_ext(&ext, &progid) {
-            Ok(_) => {
-                extensions_set.push(ext.clone());
-                // 即使 OpenWithProgids 成功, UserChoice 也得手动选才生效,
-                // 所以全部标 need_manual 让前端引导用户去系统设置
-                extensions_need_manual.push(ext.clone());
-            }
+
+        // 1) OpenWithProgids: 把 ProgId 加进 Windows "打开方式" 列表
+        if let Err(e) = write_open_with_progids(&ext, &progid) {
+            extensions_failed.push((ext.clone(), format!("OpenWithProgids: {e:#}")));
+            continue;
+        }
+
+        // 2) Set-FTA: 强制锁定 UserChoice (核心)
+        match sfta::force_set_user_choice(&ext, &progid) {
+            Ok(()) => extensions_set.push(ext.clone()),
             Err(e) => {
-                extensions_failed.push((ext.clone(), format!("OpenWithProgids: {e:#}")));
+                // OpenWithProgids 已成功, UserChoice 没锁住 → 兜底引导手动
+                // (大概率是 UCPD.sys 保护的 http/https/.pdf, 或 PowerShell 不可用)
+                eprintln!("[sfta] {ext}: {e:#}");
+                extensions_need_manual.push(ext.clone());
             }
         }
     }
-    // 让用户知道"set"了, 同时 "need_manual" 不是 0 (诚实)
-    let _ = &userchoice::force_set_user_choice; // 保留 symbol 引用避免 dead-code 警告
 
     notify_shell_assoc_changed();
 
@@ -104,47 +104,41 @@ pub fn set_app_defaults(exe_path: &str, extensions: &[String]) -> Result<AssocRe
     })
 }
 
+fn write_open_with_progids(ext: &str, progid: &str) -> Result<()> {
+    let owpid_path = format!("Software\\Classes\\{ext}\\OpenWithProgids");
+    let key = CURRENT_USER
+        .create(&owpid_path)
+        .with_context(|| format!("创建 {owpid_path} 失败"))?;
+    key.set_string(progid, "")
+        .with_context(|| format!("写 OpenWithProgids[{progid}] 失败"))?;
+    Ok(())
+}
+
 fn is_valid_ext(ext: &str) -> bool {
-    if !ext.starts_with('.') { return false; }
+    if !ext.starts_with('.') {
+        return false;
+    }
     let body = &ext[1..];
-    if body.is_empty() || body.len() > 16 { return false; }
+    if body.is_empty() || body.len() > 16 {
+        return false;
+    }
     body.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
 /// 标准化扩展名为 `.xxx`(小写)
 fn normalize_ext(ext: &str) -> String {
     let trimmed = ext.trim().to_ascii_lowercase();
-    if trimmed.starts_with('.') { trimmed } else { format!(".{trimmed}") }
-}
-
-fn associate_ext(ext: &str, progid: &str) -> Result<bool> {
-    // 1. 把 ProgId 写进 HKCU\Software\Classes\<ext>\OpenWithProgids
-    let owpid_path = format!("Software\\Classes\\{ext}\\OpenWithProgids");
-    let key = CURRENT_USER.create(&owpid_path).with_context(|| format!("创建 {owpid_path} 失败"))?;
-    key.set_string(progid, "")
-        .with_context(|| format!("写 OpenWithProgids[{progid}] 失败"))?;
-
-    // 2. 清现有 UserChoice (失败不影响,主路径是 OpenWithProgids)
-    let uc_path = format!(
-        "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\{ext}\\UserChoice"
-    );
-    let mut cleared = false;
-    if CURRENT_USER.open(&uc_path).is_ok() {
-        if CURRENT_USER.remove_tree(&uc_path).is_ok() {
-            cleared = true;
-        }
+    if trimmed.starts_with('.') {
+        trimmed
+    } else {
+        format!(".{trimmed}")
     }
-
-    Ok(cleared)
 }
 
-/// 通知 Shell 关联已变 — 用 windows crate 直接调 SHChangeNotify, 不起子进程
+/// 通知 Shell 关联已变 — 直接调 SHChangeNotify
 fn notify_shell_assoc_changed() {
     unsafe {
         use windows::Win32::UI::Shell::{SHChangeNotify, SHCNE_ASSOCCHANGED, SHCNF_IDLIST};
         SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None);
     }
 }
-
-#[allow(dead_code)]
-fn _ensure_path(_: &Path) {}
