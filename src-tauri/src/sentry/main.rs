@@ -35,6 +35,12 @@ struct ProcessUploadState {
 }
 
 fn main() {
+    // 单实例锁: 避免多个 sentry 进程同时跑 (双托盘图标 bug)
+    if let Err(()) = ensure_single_instance() {
+        eprintln!("[sentry] 已有实例在跑, 这个退出");
+        return;
+    }
+
     eprintln!("[sentry] 启动中...");
 
     let started_at = chrono::Utc::now();
@@ -430,6 +436,34 @@ fn run_tamper_check() -> Vec<mingchuang_lib::inspection::ChangeEvent> {
 fn fire_inspection_toast(title: &str, ev: &mingchuang_lib::inspection::ChangeEvent) {
     eprintln!("[sentry] {title}: {}", ev.label);
     let _ = notify::show_toast(title, &ev.label);
+}
+
+/// 用 Win32 命名 mutex 锁单实例。Local\ 前缀表示 per-user-session, 跨用户切换不冲突。
+/// 返回 Err 表示已有实例在跑, 主程序应直接退出。
+/// 注意: mutex handle 故意泄漏 — 进程退出时 Windows 自动释放, 中途释放反而会让
+/// 第二个实例混进来。
+fn ensure_single_instance() -> std::result::Result<(), ()> {
+    use windows::core::w;
+    use windows::Win32::Foundation::GetLastError;
+    use windows::Win32::System::Threading::CreateMutexW;
+
+    unsafe {
+        // 创建/打开命名 mutex
+        let _handle = match CreateMutexW(None, false, w!("Local\\MingchuangSentrySingleInstance")) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("[sentry] CreateMutex 失败 (放行): {e}");
+                return Ok(());
+            }
+        };
+        // GetLastError 必须紧跟 CreateMutex
+        let last = GetLastError();
+        // ERROR_ALREADY_EXISTS = 183
+        if last.0 == 183 {
+            return Err(());
+        }
+        Ok(())
+    }
 }
 
 fn urldecode(s: &str) -> String {

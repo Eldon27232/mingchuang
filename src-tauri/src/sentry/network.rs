@@ -101,12 +101,39 @@ mod ffi {
     }
 }
 
+/// 判断 dwRemoteAddr (network byte order, IPv4) 是否为公网地址。
+/// 跳过 loopback / 私网 / link-local / multicast / 0.0.0.0 / 监听态。
+///
+/// 关键 bug 修复: clash 这类代理软件本地监听 127.0.0.1:7890, 浏览器/app 通过
+/// 它访问外网. clash 把下载内容通过这个 loopback TCP 转发出去 — 在 TCP_ESTATS
+/// 视角里 clash 的 DataBytesOut 暴涨。但这其实是用户下载量, 不是"PCDN 上传"。
+/// 过滤掉非公网连接后, 真正流入 PCDN 监控的就只剩"对外网真实 upload"。
+fn is_internet_address(addr_net: u32) -> bool {
+    // Windows little-endian: u32 字节序 [b1,b2,b3,b4], 对应 IPv4 "b1.b2.b3.b4"
+    let b1 = (addr_net & 0xFF) as u8;
+    let b2 = ((addr_net >> 8) & 0xFF) as u8;
+    if addr_net == 0 { return false; }            // 0.0.0.0 listening
+    if b1 == 127 { return false; }                // loopback
+    if b1 == 10 { return false; }                 // 10.0.0.0/8
+    if b1 == 172 && (16..=31).contains(&b2) { return false; }  // 172.16/12
+    if b1 == 192 && b2 == 168 { return false; }   // 192.168/16
+    if b1 == 169 && b2 == 254 { return false; }   // link-local
+    if b1 >= 224 { return false; }                // multicast / reserved
+    true
+}
+
 /// 拿当前所有 TCP 连接的 (pid, 上行总字节)。返回按 pid 聚合。
+/// 仅累加远端为公网地址的连接, 滤掉 loopback / 私网 (clash 代理转发会被错算上传)。
 pub fn sample_per_pid_bytes_out() -> Result<HashMap<u32, u64>> {
     let rows = read_tcp_table_v4()?;
     let mut acc: HashMap<u32, u64> = HashMap::new();
 
     for row in rows {
+        // 过滤非公网连接
+        if !is_internet_address(row.dwRemoteAddr) {
+            continue;
+        }
+
         // 首次见的连接启用 EStats data 采集
         let rw = ffi::TCP_ESTATS_DATA_RW_V0 { EnableCollection: 1 };
         unsafe {

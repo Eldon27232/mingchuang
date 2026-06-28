@@ -462,6 +462,18 @@ code { font-family: Consolas, monospace; background: var(--panel2); padding: 2px
 .insp-badge.baseline { background: rgba(16,185,129,0.15); color: var(--ok); }
 .insp-label { font-size: 12px; flex: 1; }
 
+/* AI 审批 modal */
+.ai-approval-modal { max-width: 540px; }
+.ai-approval-modal .ai-approval-action {
+  margin: 10px 0; padding: 10px 12px;
+  background: var(--panel2); border-radius: 6px;
+  font-size: 14px; font-weight: 500;
+}
+.ai-approval-modal details pre {
+  background: var(--bg); padding: 8px 10px; border-radius: 4px;
+  font-size: 11px; overflow-x: auto; max-height: 200px;
+}
+
 /* ============ AI 工具调用合并块 + Markdown ============ */
 .ai-tool-burst {
   margin: 8px 0; background: var(--panel2); border-radius: 6px;

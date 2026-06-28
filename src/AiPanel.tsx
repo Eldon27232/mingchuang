@@ -209,7 +209,9 @@ export function AiPanel() {
         )}
       </div>
 
-      {session?.pending_call && <PendingApproval call={session.pending_call} onDecide={approve} />}
+      {session?.pending_call && (
+        <PendingApprovalModal call={session.pending_call} onDecide={approve} />
+      )}
 
       <div className="ai-input">
         <input
@@ -444,20 +446,27 @@ function statusLabel(s: string): string {
   }
 }
 
-function PendingApproval({ call, onDecide }: { call: ToolCallView; onDecide: (d: "approve" | "deny") => void; }) {
+function PendingApprovalModal({ call, onDecide }: { call: ToolCallView; onDecide: (d: "approve" | "deny") => void; }) {
   const v = call.review ? humanizeVerdict(call.review.verdict) : null;
   return (
-    <div className="ai-approval">
-      <div className="ai-approval-title">⏳ AI 想替你做这件事</div>
-      <div>{humanizeToolCall(call.name, call.args)}</div>
-      {v && <div className={`ai-review ${v.cls}`}>{v.icon} {v.text}{call.review?.reason ? ` — ${call.review.reason}` : ""}</div>}
-      <details>
-        <summary className="muted small">技术细节 ({call.name})</summary>
-        <pre>{JSON.stringify(call.args, null, 2)}</pre>
-      </details>
-      <div className="ai-approval-buttons">
-        <button className="btn-restore" onClick={() => onDecide("deny")}>不要</button>
-        <button className="btn-exec" onClick={() => onDecide("approve")}>好</button>
+    <div className="modal-backdrop" onClick={(e) => e.stopPropagation()}>
+      <div className="modal ai-approval-modal" onClick={(e) => e.stopPropagation()}>
+        <h3>⏳ AI 想替你做这件事</h3>
+        <div className="ai-approval-action">{humanizeToolCall(call.name, call.args)}</div>
+        {v && (
+          <div className={`ai-review ${v.cls}`}>
+            {v.icon} {v.text}{call.review?.reason ? ` — ${call.review.reason}` : ""}
+          </div>
+        )}
+        <details>
+          <summary className="muted small">技术细节 ({call.name})</summary>
+          <pre>{JSON.stringify(call.args, null, 2)}</pre>
+        </details>
+        <p className="muted small">点"好"AI 会立即执行, 点"不要"它知道你拒了, 会换路子或停。</p>
+        <div className="modal-buttons">
+          <button onClick={() => onDecide("deny")} className="btn-restore">不要</button>
+          <button onClick={() => onDecide("approve")} className="btn-exec">好</button>
+        </div>
       </div>
     </div>
   );

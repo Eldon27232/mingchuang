@@ -102,12 +102,38 @@ unsafe extern "system" fn wnd_proc(
                 let id = (wparam.0 & 0xFFFF) as u32;
                 match id {
                     IDM_OPEN_GUI => {
-                        // 启动 GUI exe (假设在同目录)
+                        // 启动 GUI exe (在同目录)。
+                        // 用 ShellExecuteW("open") 而不是 Command::new spawn:
+                        //  - mingchuang.exe 有 requireAdministrator manifest, CreateProcess
+                        //    从非提权 sentry 直接 spawn 会因 ERROR_ELEVATION_REQUIRED 失败
+                        //    或环境变量传递异常 (这是 AI key 从托盘启动时丢失的根因)
+                        //  - ShellExecute("open") 走 Windows shell, 会正确触发 UAC 弹窗,
+                        //    且新进程继承用户标准环境 (APPDATA 不漂)
                         if let Ok(exe) = std::env::current_exe() {
                             if let Some(dir) = exe.parent() {
                                 let gui = dir.join("mingchuang.exe");
                                 if gui.is_file() {
-                                    let _ = crate::sys_cmd_local::cmd(gui.to_str().unwrap_or_default()).spawn();
+                                    use windows::core::{w, PCWSTR};
+                                    use windows::Win32::UI::Shell::ShellExecuteW;
+                                    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+                                    let path_wide: Vec<u16> = gui.as_os_str()
+                                        .to_string_lossy()
+                                        .encode_utf16()
+                                        .chain(std::iter::once(0))
+                                        .collect();
+                                    let dir_wide: Vec<u16> = dir.as_os_str()
+                                        .to_string_lossy()
+                                        .encode_utf16()
+                                        .chain(std::iter::once(0))
+                                        .collect();
+                                    ShellExecuteW(
+                                        None,
+                                        w!("open"),
+                                        PCWSTR(path_wide.as_ptr()),
+                                        PCWSTR::null(),
+                                        PCWSTR(dir_wide.as_ptr()),
+                                        SW_SHOWNORMAL,
+                                    );
                                 }
                             }
                         }
