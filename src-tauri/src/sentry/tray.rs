@@ -16,12 +16,17 @@ use windows::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DispatchMessageW,
-    GetCursorPos, GetMessageW, LoadIconW, PostMessageW, PostQuitMessage, RegisterClassW,
-    SetForegroundWindow, TrackPopupMenu, TranslateMessage, IDI_APPLICATION, MF_SEPARATOR,
-    MF_STRING, MSG, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WM_COMMAND,
-    WM_DESTROY, WM_RBUTTONUP, WM_USER, WNDCLASSW, WS_OVERLAPPED,
+    AppendMenuW, CreateIconFromResourceEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
+    DispatchMessageW, GetCursorPos, GetMessageW, HICON, LoadIconW, LR_DEFAULTCOLOR, PostMessageW,
+    PostQuitMessage, RegisterClassW, SetForegroundWindow, TrackPopupMenu, TranslateMessage,
+    IDI_APPLICATION, MF_SEPARATOR, MF_STRING, MSG, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
+    TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WM_COMMAND, WM_DESTROY, WM_RBUTTONUP, WM_USER, WNDCLASSW,
+    WS_OVERLAPPED,
 };
+
+/// 编译期内联 app icon.ico, 给托盘用。
+/// (sentry 是独立 binary, tauri-build 只给主 exe 嵌 icon, sentry 自己不嵌就只能这么干)
+const ICON_BYTES: &[u8] = include_bytes!("../../icons/icon.ico");
 
 const WM_TRAYICON: u32 = WM_USER + 1;
 const IDM_OPEN_GUI: u32 = 100;
@@ -53,8 +58,10 @@ pub fn run() -> Result<()> {
             None,
         )?;
 
-        // 添加托盘图标
-        let icon = LoadIconW(None, IDI_APPLICATION).unwrap_or_default();
+        // 添加托盘图标 — 优先用内联的 app icon, 失败兜底 IDI_APPLICATION
+        let icon = load_app_icon().unwrap_or_else(|| {
+            LoadIconW(None, IDI_APPLICATION).unwrap_or_default()
+        });
         let mut nid = NOTIFYICONDATAW {
             cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
             hWnd: hwnd,
@@ -82,6 +89,76 @@ pub fn run() -> Result<()> {
         let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
     }
     Ok(())
+}
+
+/// 从内联的 ICO 字节里挑一个 32×32 (托盘标准尺寸) 的入口, 调
+/// CreateIconFromResourceEx 转 HICON。
+///
+/// ICO 格式 (Win32 标准):
+///   [0..6]  ICONDIR: reserved u16=0, type u16=1 (icon), count u16
+///   [6..6+count*16]  ICONDIRENTRY × count:
+///     [0]   width u8 (0 = 256)
+///     [1]   height u8
+///     [2]   colors u8
+///     [3]   reserved u8
+///     [4..6] planes u16
+///     [6..8] bpp u16
+///     [8..12] image data size u32
+///     [12..16] image data offset u32
+///   image data = BITMAPINFOHEADER + DIB pixels (或 PNG, 这里假设是 BMP DIB)
+unsafe fn load_app_icon() -> Option<HICON> {
+    let bytes = ICON_BYTES;
+    if bytes.len() < 6 {
+        return None;
+    }
+    let reserved = u16::from_le_bytes([bytes[0], bytes[1]]);
+    let img_type = u16::from_le_bytes([bytes[2], bytes[3]]);
+    let count = u16::from_le_bytes([bytes[4], bytes[5]]);
+    if reserved != 0 || img_type != 1 || count == 0 {
+        return None;
+    }
+
+    // 挑离 32 最近的入口 (倾向大于 32 而不是小于)
+    const TARGET: u32 = 32;
+    let mut best: Option<(u32, u32, u32)> = None; // (score, size, offset)
+    for i in 0..count as usize {
+        let entry = 6 + i * 16;
+        if entry + 16 > bytes.len() {
+            break;
+        }
+        let w_raw = bytes[entry];
+        let actual_w = if w_raw == 0 { 256 } else { w_raw as u32 };
+        let size =
+            u32::from_le_bytes([bytes[entry + 8], bytes[entry + 9], bytes[entry + 10], bytes[entry + 11]]);
+        let offset = u32::from_le_bytes([
+            bytes[entry + 12],
+            bytes[entry + 13],
+            bytes[entry + 14],
+            bytes[entry + 15],
+        ]);
+        // score: 越接近 TARGET 越小; 比 TARGET 小的多罚一倍
+        let score = if actual_w >= TARGET {
+            actual_w - TARGET
+        } else {
+            (TARGET - actual_w) * 2
+        };
+        match best {
+            None => best = Some((score, size, offset)),
+            Some((bs, _, _)) if score < bs => best = Some((score, size, offset)),
+            _ => {}
+        }
+    }
+
+    let (_, size, offset) = best?;
+    let size = size as usize;
+    let offset = offset as usize;
+    if offset + size > bytes.len() || size == 0 {
+        return None;
+    }
+    let img = &bytes[offset..offset + size];
+
+    // 0x00030000 = ICON 资源版本号 (Win32 magic)
+    CreateIconFromResourceEx(img, true, 0x00030000, 32, 32, LR_DEFAULTCOLOR).ok()
 }
 
 unsafe extern "system" fn wnd_proc(
