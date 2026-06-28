@@ -4,6 +4,7 @@ mod commands;
 mod elevation;
 mod fileassoc;
 mod govern;
+pub mod inspection;
 mod inventory;
 mod profile;
 mod sentry_client;
@@ -66,6 +67,10 @@ pub fn run() {
             commands::sentry_get_whitelist,
             commands::sentry_whitelist_add,
             commands::sentry_whitelist_remove,
+            commands::sentry_get_inspection_config,
+            commands::sentry_set_inspection_config,
+            commands::sentry_run_inspection_now,
+            commands::sentry_list_inspection_events,
         ])
         .run(tauri::generate_context!())
         .expect("error while running kuake-fuckyou");

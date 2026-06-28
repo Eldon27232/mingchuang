@@ -22,6 +22,9 @@ const ALERT_THRESHOLD_BPS: u64 = 8 * 1024 * 1024; // 8 Mbps
 const ALERT_WINDOW: Duration = Duration::from_secs(15);
 const ALERT_COOLDOWN: Duration = Duration::from_secs(15 * 60); // 同进程 15 分钟最多一条
 
+// 偷改告警轮询间隔 — 60s 是工程上的折中, 实时性够, 不至于撑 CPU
+const TAMPER_CHECK_INTERVAL: Duration = Duration::from_secs(60);
+
 #[derive(Debug, Clone)]
 struct ProcessUploadState {
     pid: u32,
@@ -37,6 +40,12 @@ fn main() {
     let started_at = chrono::Utc::now();
     let mut alerts_total: u64 = 0;
     let mut last_alert_at: Option<chrono::DateTime<chrono::Utc>> = None;
+
+    // 巡检/偷改告警状态
+    let mut last_inspection_at: Option<chrono::DateTime<chrono::Utc>> = None;
+    let mut last_tamper_check_at: Option<chrono::DateTime<chrono::Utc>> = None;
+    let mut last_inspection_findings: u32 = 0;
+    let mut last_tamper_at_instant: Option<Instant> = None;
 
     let args: Vec<String> = std::env::args().collect();
 
@@ -119,11 +128,65 @@ fn main() {
             paused_until: control.paused_until,
             alerts_total,
             monitored_pids: states.len(),
+            last_inspection_at,
+            last_tamper_check_at,
+            last_inspection_findings,
         });
 
         if paused {
             std::thread::sleep(SAMPLE_INTERVAL);
             continue;
+        }
+
+        // ============ 偷改告警 (高频快查) ============
+        let tamper_due = control.tamper_alert_enabled
+            && last_tamper_at_instant
+                .map(|t| Instant::now().duration_since(t) >= TAMPER_CHECK_INTERVAL)
+                .unwrap_or(true);
+        if tamper_due {
+            let findings = run_tamper_check();
+            last_tamper_at_instant = Some(Instant::now());
+            last_tamper_check_at = Some(chrono::Utc::now());
+            for ev in &findings {
+                fire_inspection_toast("🚨 偷改告警", ev);
+                let _ = events::append_inspection(ev);
+            }
+            if !findings.is_empty() {
+                alerts_total += findings.len() as u64;
+                last_alert_at = Some(chrono::Utc::now());
+            }
+        }
+
+        // ============ 定时巡检 (低频全面) ============
+        let interval_minutes = control.inspection_interval_minutes.max(5) as i64;
+        let inspection_due = control.inspection_enabled
+            && (control.run_inspection_now
+                || last_inspection_at
+                    .map(|t| {
+                        chrono::Utc::now()
+                            .signed_duration_since(t)
+                            .num_minutes()
+                            >= interval_minutes
+                    })
+                    .unwrap_or(true));
+        if inspection_due {
+            let findings = run_full_inspection();
+            last_inspection_at = Some(chrono::Utc::now());
+            last_inspection_findings = findings.len() as u32;
+            for ev in &findings {
+                fire_inspection_toast("🔍 定时巡检发现变化", ev);
+                let _ = events::append_inspection(ev);
+            }
+            if !findings.is_empty() {
+                alerts_total += findings.len() as u64;
+                last_alert_at = Some(chrono::Utc::now());
+            }
+            // 清掉一次性请求位
+            if control.run_inspection_now {
+                let mut c = control.clone();
+                c.run_inspection_now = false;
+                let _ = state_io::write_control(&c);
+            }
         }
 
         let now = Instant::now();
@@ -303,6 +366,50 @@ fn handle_pending_action(action: &state_io::PendingAction) {
             // ignore: 什么都不做, 默认冷却 15 分钟里不会再弹
         }
     }
+}
+
+// ============ 巡检 / 偷改告警 ============
+
+fn run_full_inspection() -> Vec<kuake_fuckyou_lib::inspection::ChangeEvent> {
+    let curr = match kuake_fuckyou_lib::inspection::scan_full() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[sentry] 定时巡检扫描失败: {e:#}");
+            return Vec::new();
+        }
+    };
+    let baseline = kuake_fuckyou_lib::inspection::load_baseline().unwrap_or_default();
+    let diff = kuake_fuckyou_lib::inspection::diff(&baseline, &curr);
+    // 把当前快照写回 baseline (这次的 curr = 下次的 baseline)
+    if let Err(e) = kuake_fuckyou_lib::inspection::save_baseline(&curr) {
+        eprintln!("[sentry] 保存 inspection baseline 失败: {e:#}");
+    }
+    diff
+}
+
+/// 偷改告警: 跟 baseline 比, 但不更新 baseline (只有定时巡检会更新)
+/// — 这样用户没点"立即巡检"或"接受变化"前, 同一个偷改会持续告 (按 60s 节流)
+fn run_tamper_check() -> Vec<kuake_fuckyou_lib::inspection::ChangeEvent> {
+    let curr = match kuake_fuckyou_lib::inspection::scan_quick() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[sentry] 偷改快查失败: {e:#}");
+            return Vec::new();
+        }
+    };
+    let baseline = match kuake_fuckyou_lib::inspection::load_baseline() {
+        Some(b) => b,
+        None => {
+            // 没有 baseline = 还没第一次定时巡检过, 无对比基准, 静默
+            return Vec::new();
+        }
+    };
+    kuake_fuckyou_lib::inspection::diff(&baseline, &curr)
+}
+
+fn fire_inspection_toast(title: &str, ev: &kuake_fuckyou_lib::inspection::ChangeEvent) {
+    eprintln!("[sentry] {title}: {}", ev.label);
+    let _ = notify::show_toast(title, &ev.label);
 }
 
 fn urldecode(s: &str) -> String {

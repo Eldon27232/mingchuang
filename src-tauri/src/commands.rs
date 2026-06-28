@@ -1,5 +1,5 @@
 use crate::action::{self, ActionPlan, ExecResult};
-use crate::sentry_client::{self, AlertEvent, SentryStatus, WhitelistFile};
+use crate::sentry_client::{self, AlertEvent, InspectionConfig, InspectionEvent, SentryStatus, WhitelistFile};
 use crate::ai::agent::{self, ApprovalDecision, Session};
 use crate::ai::config::{self as ai_config, AiConfig};
 use crate::elevation::{self, ElevationStatus};
@@ -206,6 +206,28 @@ pub fn sentry_whitelist_add(image_name: String, reason: Option<String>) -> Resul
 #[tauri::command]
 pub fn sentry_whitelist_remove(image_name: String) -> Result<WhitelistFile, String> {
     sentry_client::whitelist_remove(image_name).map_err(|e| format!("{e:#}"))
+}
+
+// ============ 巡检/偷改告警 ============
+
+#[tauri::command]
+pub fn sentry_get_inspection_config() -> InspectionConfig {
+    sentry_client::get_inspection_config()
+}
+
+#[tauri::command]
+pub fn sentry_set_inspection_config(config: InspectionConfig) -> Result<(), String> {
+    sentry_client::set_inspection_config(config).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn sentry_run_inspection_now() -> Result<(), String> {
+    sentry_client::request_inspection_now().map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn sentry_list_inspection_events(limit: usize) -> Vec<InspectionEvent> {
+    sentry_client::list_recent_inspection_events(limit.max(1).min(500))
 }
 
 // ============ AI ============

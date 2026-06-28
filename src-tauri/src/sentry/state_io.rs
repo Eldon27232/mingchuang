@@ -13,6 +13,15 @@ pub struct SentryState {
     pub paused_until: Option<DateTime<Utc>>,
     pub alerts_total: u64,
     pub monitored_pids: usize,
+    /// 上次巡检完成时间
+    #[serde(default)]
+    pub last_inspection_at: Option<DateTime<Utc>>,
+    /// 上次偷改告警快查时间
+    #[serde(default)]
+    pub last_tamper_check_at: Option<DateTime<Utc>>,
+    /// 最近一次巡检的发现数 (新增问题项, 0 表示一切正常)
+    #[serde(default)]
+    pub last_inspection_findings: u32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -26,6 +35,24 @@ pub struct ControlFile {
     /// Toast 按钮点击后, sentry 帮手进程把动作写到这里, 主守护进程读后处理
     #[serde(default)]
     pub pending_actions: Vec<PendingAction>,
+
+    // ============ 巡检/偷改告警 (默认全关) ============
+    /// 定时巡检: 每 inspection_interval_minutes 跑一次全面扫描 (PC namespace + 保活 + 自启 + 默认打开方式漂移)
+    #[serde(default)]
+    pub inspection_enabled: bool,
+    /// 偷改告警: 每 60s 跑轻量快查 (UserChoice + Run 键), 发现变化立刻告警
+    #[serde(default)]
+    pub tamper_alert_enabled: bool,
+    /// 巡检间隔, 分钟。15/60/360/1440 四个推荐值, 默认 60
+    #[serde(default = "default_inspection_interval")]
+    pub inspection_interval_minutes: u32,
+    /// GUI 写入: 请求立即跑一次巡检, 守护进程消化后会清回 false
+    #[serde(default)]
+    pub run_inspection_now: bool,
+}
+
+fn default_inspection_interval() -> u32 {
+    60
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -22,6 +22,12 @@ pub struct SentryState {
     pub paused_until: Option<DateTime<Utc>>,
     pub alerts_total: u64,
     pub monitored_pids: usize,
+    #[serde(default)]
+    pub last_inspection_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub last_tamper_check_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub last_inspection_findings: u32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -30,6 +36,32 @@ pub struct ControlFile {
     pub paused_until: Option<DateTime<Utc>>,
     #[serde(default)]
     pub stop_requested: bool,
+    #[serde(default)]
+    pub inspection_enabled: bool,
+    #[serde(default)]
+    pub tamper_alert_enabled: bool,
+    #[serde(default = "default_inspection_interval")]
+    pub inspection_interval_minutes: u32,
+    #[serde(default)]
+    pub run_inspection_now: bool,
+}
+
+fn default_inspection_interval() -> u32 { 60 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InspectionConfig {
+    pub inspection_enabled: bool,
+    pub tamper_alert_enabled: bool,
+    pub inspection_interval_minutes: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InspectionEvent {
+    pub ts: String,
+    pub kind: String,      // "added" / "userchoice_lost"
+    pub category: String,  // "pc_namespace" / "autostart" / "userchoice"
+    pub label: String,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -187,6 +219,64 @@ pub fn request_stop() -> Result<()> {
     let mut c = read_control();
     c.stop_requested = true;
     write_control(&c)
+}
+
+// ============ 巡检/偷改告警 ============
+
+pub fn get_inspection_config() -> InspectionConfig {
+    let c = read_control();
+    InspectionConfig {
+        inspection_enabled: c.inspection_enabled,
+        tamper_alert_enabled: c.tamper_alert_enabled,
+        inspection_interval_minutes: c.inspection_interval_minutes,
+    }
+}
+
+pub fn set_inspection_config(cfg: InspectionConfig) -> Result<()> {
+    let mut c = read_control();
+    c.inspection_enabled = cfg.inspection_enabled;
+    c.tamper_alert_enabled = cfg.tamper_alert_enabled;
+    c.inspection_interval_minutes = cfg.inspection_interval_minutes.max(5).min(1440 * 7);
+    write_control(&c)
+}
+
+pub fn request_inspection_now() -> Result<()> {
+    let mut c = read_control();
+    c.run_inspection_now = true;
+    write_control(&c)
+}
+
+pub fn list_recent_inspection_events(limit: usize) -> Vec<InspectionEvent> {
+    let mut out = Vec::new();
+    let dir = sentry_dir();
+    if !dir.is_dir() { return out; }
+    let Ok(entries) = std::fs::read_dir(&dir) else { return out; };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name().and_then(|n| n.to_str())
+                .map(|n| n.starts_with("events-") && n.ends_with(".jsonl"))
+                .unwrap_or(false)
+        })
+        .collect();
+    files.sort();
+    files.reverse();
+    for f in files {
+        let Ok(txt) = std::fs::read_to_string(&f) else { continue; };
+        for line in txt.lines().rev() {
+            if line.trim().is_empty() { continue; }
+            // jsonl 里有两种 schema, 用字段在不在区分
+            if let Ok(ev) = serde_json::from_str::<InspectionEvent>(line) {
+                // 防止把 AlertEvent 误解为 InspectionEvent (PCDN alert 没 kind/category 字段)
+                if !ev.kind.is_empty() && !ev.category.is_empty() {
+                    out.push(ev);
+                    if out.len() >= limit { return out; }
+                }
+            }
+        }
+    }
+    out
 }
 
 // ============ 启动/自启 ============

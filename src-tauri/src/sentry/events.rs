@@ -29,11 +29,39 @@ pub fn append_alert(pid: u32, image_name: &str, up_bps: u64) -> Result<()> {
         image_name: image_name.into(),
         up_bps,
     };
+    write_jsonl(&event)
+}
+
+/// 巡检/偷改告警 event — 跟 PCDN AlertEvent 共用同一个 JSONL, 用 kind 字段区分
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InspectionLogEntry {
+    pub ts: String,
+    pub kind: String,
+    pub category: String,
+    pub label: String,
+    pub detail: String,
+}
+
+pub fn append_inspection(ev: &kuake_fuckyou_lib::inspection::ChangeEvent) -> Result<()> {
+    let entry = InspectionLogEntry {
+        ts: ev.ts.to_rfc3339(),
+        kind: match ev.kind {
+            kuake_fuckyou_lib::inspection::ChangeKind::Added => "added".into(),
+            kuake_fuckyou_lib::inspection::ChangeKind::UserChoiceLost => "userchoice_lost".into(),
+        },
+        category: ev.category.clone(),
+        label: ev.label.clone(),
+        detail: ev.detail.clone(),
+    };
+    write_jsonl(&entry)
+}
+
+fn write_jsonl<T: Serialize>(item: &T) -> Result<()> {
     let path = events_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).with_context(|| format!("创建 {parent:?} 失败"))?;
     }
-    let line = serde_json::to_string(&event)? + "\n";
+    let line = serde_json::to_string(item)? + "\n";
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
