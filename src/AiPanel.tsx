@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { humanizeToolCall, humanizeVerdict } from "./labels";
 
 interface ToolCallView {
@@ -181,18 +183,24 @@ export function AiPanel() {
       )}
 
       <div className="ai-log" ref={logRef}>
-        {(session?.messages ?? []).map((m, i) => (
-          <MessageView
-            key={i} m={m} index={i}
-            onEdit={startEdit}
-            onRetry={i === lastAssistantIdx && !isRunning && !isWaiting ? retry : undefined}
-            editing={editingIndex === i}
-            editingText={editingText}
-            setEditingText={setEditingText}
-            onSubmitEdit={submitEdit}
-            onCancelEdit={cancelEdit}
-          />
-        ))}
+        {groupMessages(session?.messages ?? []).map((seg, segIdx) => {
+          if (seg.kind === "burst") {
+            return <ToolBurstView key={segIdx} entries={seg.entries} />;
+          }
+          const i = seg.idx;
+          return (
+            <MessageView
+              key={i} m={seg.msg} index={i}
+              onEdit={startEdit}
+              onRetry={i === lastAssistantIdx && !isRunning && !isWaiting ? retry : undefined}
+              editing={editingIndex === i}
+              editingText={editingText}
+              setEditingText={setEditingText}
+              onSubmitEdit={submitEdit}
+              onCancelEdit={cancelEdit}
+            />
+          );
+        })}
         {session?.last_error && <div className="ai-msg err">⚠ {session.last_error}</div>}
         {isRunning && (
           <div className="ai-msg assistant thinking">
@@ -218,6 +226,127 @@ export function AiPanel() {
           <button onClick={send} disabled={!input.trim() || !config?.api_key}>发送</button>
         )}
       </div>
+    </div>
+  );
+}
+
+// ============ 消息分段 ============
+// 把消息列表分成: "regular" (单条 user / 终答 assistant) 和 "burst" (连续工具调用 assistant).
+// burst 的判定: 连续 ≥2 条 assistant 消息且都带 tool_calls
+type LogSegment =
+  | { kind: "regular"; msg: ChatMessage; idx: number }
+  | { kind: "burst"; entries: Array<{ msg: ChatMessage; idx: number }> };
+
+function groupMessages(msgs: ChatMessage[]): LogSegment[] {
+  const out: LogSegment[] = [];
+  let i = 0;
+  while (i < msgs.length) {
+    const m = msgs[i];
+    if (m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0) {
+      // 收集连续的 tool-using assistant
+      const entries = [];
+      while (i < msgs.length) {
+        const cur = msgs[i];
+        if (cur.role === "assistant" && cur.tool_calls && cur.tool_calls.length > 0) {
+          entries.push({ msg: cur, idx: i });
+          i++;
+        } else if (cur.role === "tool") {
+          i++; // tool 消息在 MessageView 里本来就 return null, 跳过
+        } else {
+          break;
+        }
+      }
+      if (entries.length >= 2) {
+        out.push({ kind: "burst", entries });
+      } else {
+        // 只有 1 条带 tool_calls 的, 当 regular 渲染 (避免 1 步也包成折叠块)
+        for (const e of entries) out.push({ kind: "regular", msg: e.msg, idx: e.idx });
+      }
+    } else {
+      out.push({ kind: "regular", msg: m, idx: i });
+      i++;
+    }
+  }
+  return out;
+}
+
+function ToolBurstView({ entries }: { entries: Array<{ msg: ChatMessage; idx: number }> }) {
+  const [expanded, setExpanded] = useState(false);
+  const totalCalls = entries.reduce((n, e) => n + (e.msg.tool_calls?.length ?? 0), 0);
+  // 收集所有 tool name 做个 1 行预览
+  const allCalls: ToolCallView[] = entries.flatMap((e) => e.msg.tool_calls ?? []);
+  const preview = allCalls.slice(0, 4).map((c) => humanizeToolCall(c.name, c.args)).join(" / ");
+  const more = allCalls.length > 4 ? ` 等 ${allCalls.length} 步` : "";
+
+  return (
+    <div className="ai-tool-burst">
+      <div className="ai-tool-burst-head" onClick={() => setExpanded(!expanded)}>
+        <span className="caret">{expanded ? "▼" : "▶"}</span>
+        <span className="ai-tool-burst-label">
+          🔧 调了 {totalCalls} 步工具
+          <span className="muted small"> · {preview}{more}</span>
+        </span>
+      </div>
+      {expanded && (
+        <div className="ai-tool-burst-body">
+          {entries.map((e) => (
+            <BurstStep key={e.idx} m={e.msg} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BurstStep({ m }: { m: ChatMessage }) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggle = (id: string) =>
+    setExpanded((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  return (
+    <div className="ai-burst-step">
+      {m.content && (
+        <div className="ai-msg-text"><AssistantMarkdown>{m.content}</AssistantMarkdown></div>
+      )}
+      {m.tool_calls?.map((c) => {
+        const ex = expanded.has(c.id);
+        return (
+          <div key={c.id} className={`ai-toolcall status-${c.status}`}>
+            <div className="toolcall-head" onClick={() => toggle(c.id)}>
+              <span className="caret">{ex ? "▼" : "▶"}</span>
+              <span className="toolcall-action">{humanizeToolCall(c.name, c.args)}</span>
+              <span className="muted small"> · {statusLabel(c.status)}</span>
+            </div>
+            {ex && (
+              <div className="toolcall-body">
+                {c.review && (() => {
+                  const v = humanizeVerdict(c.review.verdict);
+                  return <div className={`ai-review ${v.cls}`}>{v.icon} {v.text} ({c.review.reason})</div>;
+                })()}
+                <details>
+                  <summary className="muted small">技术细节 ({c.name})</summary>
+                  <pre className="ai-args">{JSON.stringify(c.args, null, 2)}</pre>
+                </details>
+                {c.result && <div className="ai-result small">→ {c.result}</div>}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function AssistantMarkdown({ children }: { children: string }) {
+  return (
+    <div className="markdown">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+        }}
+      >
+        {children}
+      </ReactMarkdown>
     </div>
   );
 }
@@ -262,7 +391,11 @@ function MessageView({
   return (
     <div className="ai-msg assistant">
       <div className="ai-msg-role">AI</div>
-      {m.content && <div className="ai-msg-text">{m.content}</div>}
+      {m.content && (
+        <div className="ai-msg-text">
+          <AssistantMarkdown>{m.content}</AssistantMarkdown>
+        </div>
+      )}
       {m.tool_calls?.map((c) => {
         const ex = expanded.has(c.id);
         const humanized = humanizeToolCall(c.name, c.args);

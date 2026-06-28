@@ -14,6 +14,7 @@ pub const SAFE_TOOLS: &[&str] = &[
     "query_processes",
     "query_services",
     "query_registry_value",
+    "list_registry_subkeys",
 ];
 
 pub const DESTRUCTIVE_TOOLS: &[&str] = &[
@@ -54,7 +55,16 @@ pub fn definitions() -> Vec<AnthropicTool> {
         },
         AnthropicTool {
             name: "query_registry_value".into(),
-            description: "读取注册表某个键下的所有值。target 形如 HKCU\\Software\\Foo。".into(),
+            description: "读 target 注册表键下的【所有 value + 所有子键 (递归)】, 返回完整树结构。target 形如 HKCU\\Software\\Foo 或 HKLM\\System\\... 。需要快速浏览整个分支用这个; 只想要直接子键名称(不深入)用 list_registry_subkeys 更轻量。结果含 values 数组 (name+kind+data) 和 subkeys 数组 (嵌套同结构)。".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {"target": {"type": "string"}},
+                "required": ["target"]
+            }),
+        },
+        AnthropicTool {
+            name: "list_registry_subkeys".into(),
+            description: "仅枚举 target 键下【直接】子键的名称列表 (不递归, 不读 value), 比 query_registry_value 快很多。适合先确认结构再深入。target 形如 HKCU\\Software 或 HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run 。".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {"target": {"type": "string"}},
@@ -145,6 +155,7 @@ pub fn run_tool(name: &str, args: &Value) -> Result<ToolOutput> {
         "query_processes" => run_query_processes(args),
         "query_services" => run_query_services(args),
         "query_registry_value" => run_query_reg_value(args),
+        "list_registry_subkeys" => run_list_reg_subkeys(args),
         "reg_delete" => run_reg_delete(args),
         "service_stop" => run_service_stop(args),
         "service_disable" => run_service_disable(args),
@@ -243,6 +254,33 @@ fn run_query_reg_value(args: &Value) -> Result<ToolOutput> {
     Ok(ToolOutput {
         ok: true,
         summary: format!("读 {} 下 {} 个值, {} 个子键", target, tree.values.len(), tree.subkeys.len()),
+        data,
+    })
+}
+
+fn run_list_reg_subkeys(args: &Value) -> Result<ToolOutput> {
+    use windows_registry::{CLASSES_ROOT, CURRENT_USER, LOCAL_MACHINE, USERS, CURRENT_CONFIG};
+    let target = arg_str(args, "target")?;
+    let (hive_str, path) = crate::whitelist::split_hive(&target)
+        .ok_or_else(|| anyhow!("无法识别 hive: {target}"))?;
+    let root = match hive_str {
+        "HKCU" => CURRENT_USER,
+        "HKLM" => LOCAL_MACHINE,
+        "HKCR" => CLASSES_ROOT,
+        "HKU" => USERS,
+        "HKCC" => CURRENT_CONFIG,
+        other => return Err(anyhow!("不支持的 hive: {other}")),
+    };
+    let key = root.open(path)
+        .map_err(|e| anyhow!("打开 {target} 失败: {e}"))?;
+    let subkeys: Vec<String> = key.keys()
+        .map_err(|e| anyhow!("枚举子键失败: {e}"))?
+        .collect();
+    let count = subkeys.len();
+    let data = serde_json::to_value(&subkeys)?;
+    Ok(ToolOutput {
+        ok: true,
+        summary: format!("{target} 下有 {count} 个直接子键"),
         data,
     })
 }

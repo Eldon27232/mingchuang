@@ -462,6 +462,61 @@ code { font-family: Consolas, monospace; background: var(--panel2); padding: 2px
 .insp-badge.baseline { background: rgba(16,185,129,0.15); color: var(--ok); }
 .insp-label { font-size: 12px; flex: 1; }
 
+/* ============ AI 工具调用合并块 + Markdown ============ */
+.ai-tool-burst {
+  margin: 8px 0; background: var(--panel2); border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.ai-tool-burst-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; cursor: pointer; user-select: none;
+}
+.ai-tool-burst-head:hover { background: rgba(255,255,255,0.03); }
+.ai-tool-burst-label { font-size: 13px; flex: 1; }
+.ai-tool-burst-body {
+  padding: 4px 12px 10px; border-top: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.ai-burst-step { padding: 6px 0; border-bottom: 1px dashed var(--border); }
+.ai-burst-step:last-child { border-bottom: none; }
+
+/* Markdown 渲染 */
+.markdown { font-size: 13px; line-height: 1.5; }
+.markdown p { margin: 6px 0; }
+.markdown p:first-child { margin-top: 0; }
+.markdown p:last-child { margin-bottom: 0; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4 {
+  margin: 10px 0 6px; font-weight: 600; line-height: 1.3;
+}
+.markdown h1 { font-size: 17px; }
+.markdown h2 { font-size: 15px; }
+.markdown h3 { font-size: 14px; }
+.markdown h4 { font-size: 13px; color: var(--muted); }
+.markdown ul, .markdown ol { margin: 6px 0; padding-left: 22px; }
+.markdown li { margin: 2px 0; }
+.markdown code {
+  background: rgba(99,179,237,0.1); padding: 1px 5px; border-radius: 3px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px;
+}
+.markdown pre {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 4px; padding: 8px 10px; margin: 8px 0;
+  overflow-x: auto; font-size: 12px;
+}
+.markdown pre code { background: none; padding: 0; font-size: 12px; }
+.markdown blockquote {
+  border-left: 3px solid var(--accent); padding-left: 10px;
+  margin: 6px 0; color: var(--muted);
+}
+.markdown a { color: var(--accent); text-decoration: underline; }
+.markdown table { border-collapse: collapse; margin: 8px 0; font-size: 12px; }
+.markdown th, .markdown td {
+  border: 1px solid var(--border); padding: 4px 8px; text-align: left;
+}
+.markdown th { background: var(--panel2); font-weight: 600; }
+.markdown hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
+.markdown strong { font-weight: 600; color: var(--fg); }
+
 /* ============ Updater Card ============ */
 .updater-card {
   margin-top: 16px;
