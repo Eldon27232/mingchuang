@@ -60,11 +60,42 @@ pub async fn call(cfg: &AiConfig, req: &AnthropicRequest) -> Result<AnthropicRes
     if cfg.api_key.is_empty() {
         return Err(anyhow!("未配置 API key, 请在设置里填入"));
     }
-    match cfg.provider.as_str() {
-        "anthropic" => call_anthropic(cfg, req).await,
-        "openai" | "custom" => call_openai(cfg, req).await,
-        other => Err(anyhow!("未知 provider: {other}")),
+
+    // 网络抖动重试: 连续 5 次都挂才报错。
+    // 只重试网络层失败 (HTTP 请求发不出去 / 超时 / 连接被拒); 一旦上游返回
+    // HTTP 4xx/5xx 不重试 (重试也没用, 是上游真出问题或 key 不对)。
+    // 间隔: 1s, 2s, 4s, 8s (指数退避), 第 5 次失败直接返回。
+    const MAX_ATTEMPTS: usize = 5;
+    let mut last_err: Option<anyhow::Error> = None;
+    for attempt in 1..=MAX_ATTEMPTS {
+        let result = match cfg.provider.as_str() {
+            "anthropic" => call_anthropic(cfg, req).await,
+            "openai" | "custom" => call_openai(cfg, req).await,
+            other => return Err(anyhow!("未知 provider: {other}")),
+        };
+        match result {
+            Ok(resp) => return Ok(resp),
+            Err(e) => {
+                let msg = format!("{e:#}");
+                // 网络层错误才重试; HTTP 状态码错 / 解析错 / key 错 不重试
+                let is_network = msg.contains("HTTP 请求失败")
+                    || msg.contains("os error 10060")
+                    || msg.contains("os error 10061")
+                    || msg.contains("Connection")
+                    || msg.contains("dns")
+                    || msg.contains("Connect");
+                if !is_network || attempt == MAX_ATTEMPTS {
+                    return Err(e);
+                }
+                eprintln!("[ai] 第 {attempt}/{MAX_ATTEMPTS} 次失败 (网络), 重试中: {msg}");
+                last_err = Some(e);
+                let backoff = std::time::Duration::from_secs(1 << (attempt - 1));
+                tokio::time::sleep(backoff).await;
+            }
+        }
     }
+    // unreachable in normal path
+    Err(last_err.unwrap_or_else(|| anyhow!("LLM 调用失败 (重试用完)")))
 }
 
 async fn http_client() -> Result<reqwest::Client> {

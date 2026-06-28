@@ -122,7 +122,8 @@ export function AiPanel() {
       await refreshSession(sid);
       await loadSessions();  // session 标题用首条 user 消息, 发完刷一下
     } catch (e) {
-      alert(`发送失败: ${e}`);
+      // 不弹窗 — 错误已通过 session.last_error 内联显示在 ai-log 底部
+      console.warn("ai_send_message failed:", e);
       await refreshSession(sid);
     }
   };
