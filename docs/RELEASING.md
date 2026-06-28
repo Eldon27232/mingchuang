@@ -79,26 +79,50 @@ gh release create "v$ver" $msi $sig `
 }
 ```
 
+**⚠ 两个坑必须避开**:
+
+1. **GitHub 会剥 asset 文件名里的中文** — 上传 `明窗_0.0.x_x64_zh-CN.msi` 后实际 asset 叫 `_0.0.x_x64_zh-CN.msi` (前缀下划线是被剥的"明窗"残骸). 解决: build 完先复制重命名成 ASCII 前缀 `Mingchuang_*`, 上传那一份, latest.json 的 url 也用同一名.
+
+2. **PowerShell 5.1 `Set-Content -Encoding utf8` 写的是带 BOM 的 UTF-8** — tauri-updater 的 JSON parser 拒收带 BOM 的输入, 客户端报 "error decoding response body". 解决: 用 `[System.IO.File]::WriteAllText` + `UTF8Encoding($false)`.
+
 生成 + 上传脚本 (粘贴到 PowerShell, 改 `$ver`):
 
 ```powershell
 $ver = "0.0.x"
-$msi = "明窗_${ver}_x64_zh-CN.msi"
-$sigContent = Get-Content -Raw "src-tauri\target\release\bundle\msi\$msi.sig"
-$json = @{
+$stage = "$env:TEMP\mingchuang-v$ver"
+New-Item -ItemType Directory -Force $stage | Out-Null
+
+# 1) 复制 build 产物到 staging, 改 ASCII 前缀名 (避 GitHub 剥中文)
+$msiSrc = "src-tauri\target\release\bundle\msi\明窗_${ver}_x64_zh-CN.msi"
+$exeSrc = "src-tauri\target\release\bundle\nsis\明窗_${ver}_x64-setup.exe"
+$msi = "$stage\Mingchuang_${ver}_x64_zh-CN.msi"
+$exe = "$stage\Mingchuang_${ver}_x64-setup.exe"
+Copy-Item $msiSrc $msi
+Copy-Item "$msiSrc.sig" "$msi.sig"
+Copy-Item $exeSrc $exe
+Copy-Item "$exeSrc.sig" "$exe.sig"
+
+# 2) 生成 latest.json 无 BOM
+$sigContent = (Get-Content -Raw "$msi.sig").Trim()
+$latest = [PSCustomObject]@{
   version = $ver
   notes = "更新说明"
-  pub_date = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
-  platforms = @{
-    "windows-x86_64" = @{
-      signature = $sigContent.Trim()
-      url = "https://github.com/Eldon27232/mingchuang/releases/download/v$ver/$msi"
+  pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+  platforms = [PSCustomObject]@{
+    "windows-x86_64" = [PSCustomObject]@{
+      signature = $sigContent
+      url = "https://github.com/Eldon27232/mingchuang/releases/download/v$ver/Mingchuang_${ver}_x64_zh-CN.msi"
     }
   }
-} | ConvertTo-Json -Depth 5
+}
+$json = $latest | ConvertTo-Json -Depth 5 -Compress
+$latestPath = "$stage\latest.json"
+# ⚠ 必须用 WriteAllText + UTF8Encoding(false), Set-Content -Encoding utf8 会带 BOM
+[System.IO.File]::WriteAllText($latestPath, $json, [System.Text.UTF8Encoding]::new($false))
 
-Set-Content -Path "latest.json" -Value $json -Encoding utf8
-gh release upload "v$ver" latest.json --clobber
+# 3) 上传
+gh release create "v$ver" $msi "$msi.sig" $exe "$exe.sig" $latestPath `
+  --title "v$ver" --notes "..." --repo Eldon27232/mingchuang
 ```
 
 ---
