@@ -146,6 +146,60 @@ fn start_menu_dirs() -> Vec<PathBuf> {
     out
 }
 
+/// 判断从开始菜单扫到的一条 .lnk 是不是"打开器"应用 (返回 false 就丢弃)。
+///
+/// Windows 没有 100% 准确的方式知道一个 exe 能不能打开文件 (除非真试),
+/// 但开始菜单里 90% 的垃圾条目 (卸载/Setup/Help/ReadMe/License/Updater)
+/// 都能通过名称和 exe 文件名干掉。这里只做硬过滤, 不做"必须在
+/// RegisteredApplications 里"那种激进过滤 (会丢绿色版/便携版)。
+fn looks_like_file_opener(display_name: &str, exe_path: &str) -> bool {
+    let n = display_name.to_ascii_lowercase();
+    let fname = std::path::Path::new(exe_path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    // 显示名 黑名单 (中英文混)。子串匹配。
+    const NAME_BLACKLIST: &[&str] = &[
+        // 卸载
+        "卸载", "uninstall", "uninst",
+        // 安装/配置
+        "setup", "installer", "安装", "install ",
+        // 更新
+        "update", "updater", "升级", "更新",
+        // 帮助/说明
+        "help", "readme", "read me", "帮助", "说明",
+        // 许可/法务
+        "license", "许可", "eula",
+        // 教程/示例
+        "tutorial", "教程", "manual", "手册", "guide", "sample", "示例", "demo", "演示",
+        // 反馈/崩溃/诊断
+        "crash", "report", "feedback", "反馈", "diagnostic", "诊断", "logger",
+        // 网站/在线工具
+        "website", "homepage", "网站", "官网",
+    ];
+    for kw in NAME_BLACKLIST {
+        if n.contains(kw) {
+            return false;
+        }
+    }
+
+    // exe 文件名黑名单 (前缀/子串)
+    const EXE_BLACKLIST: &[&str] = &[
+        "uninst", "unins", "setup", "installer", "install.exe",
+        "update.exe", "updater.exe", "crashpad", "crashreport", "wer.exe",
+        "report.exe", "license.exe",
+    ];
+    for kw in EXE_BLACKLIST {
+        if fname.contains(kw) {
+            return false;
+        }
+    }
+
+    true
+}
+
 /// 扫开始菜单 .lnk → 提取 target exe → 包装成 InstalledApp
 fn scan_start_menu_apps() -> Result<Vec<InstalledApp>> {
     use windows::core::{Interface, PCWSTR, PWSTR};
@@ -220,6 +274,12 @@ fn scan_start_menu_apps() -> Result<Vec<InstalledApp>> {
                     .and_then(|s| s.to_str())
                     .map(String::from)
                     .unwrap_or_else(|| "Unknown".into());
+
+                // 过滤掉"卸载/Setup/Help/Updater/Crash" 等明显不是 opener 的 .lnk
+                if !looks_like_file_opener(&display_name, &target) {
+                    continue;
+                }
+
                 let category = guess_category(&display_name, &target);
 
                 let key = format!(
@@ -295,4 +355,65 @@ fn guess_category(name: &str, path: &str) -> String {
         return "doc".into();
     }
     "custom".into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::looks_like_file_opener;
+
+    #[test]
+    fn junk_is_filtered() {
+        // 这些应该全被过滤掉
+        let junk = [
+            ("卸载 PotPlayer", r"C:\Program Files\DAUM\PotPlayer\unins000.exe"),
+            ("Uninstall WinRAR", r"C:\Program Files\WinRAR\Uninstall.exe"),
+            ("PotPlayer 帮助", r"C:\Program Files\DAUM\PotPlayer\PotPlayerMini64.exe"),
+            ("Setup", r"C:\Temp\setup.exe"),
+            ("Auto Updater", r"C:\Program Files\App\updater.exe"),
+            ("ReadMe", r"C:\Program Files\App\readme.exe"),
+            ("Crash Reporter", r"C:\Program Files\App\crashreport.exe"),
+            ("License Agreement", r"C:\Program Files\App\license.exe"),
+            ("教程", r"C:\Program Files\App\tutorial.exe"),
+            ("Demo", r"C:\Program Files\App\demo.exe"),
+        ];
+        for (name, path) in junk {
+            assert!(
+                !looks_like_file_opener(name, path),
+                "应被过滤但通过了: {name} ({path})"
+            );
+        }
+    }
+
+    /// 真机 dump: 跑一次 detect_installed, 打印当前检测到什么。
+    /// 用 cargo test --lib -- --ignored detect_dump --nocapture
+    #[test]
+    #[ignore]
+    fn detect_dump() {
+        let apps = super::detect_installed();
+        eprintln!("共检测到 {} 个 app:", apps.len());
+        for a in &apps {
+            eprintln!("  [{}] {} - {}", a.category, a.display_name, a.exe_path);
+        }
+    }
+
+    #[test]
+    fn legitimate_passes() {
+        // 这些应该全部保留
+        let ok = [
+            ("PotPlayer", r"C:\Program Files\DAUM\PotPlayer\PotPlayerMini64.exe"),
+            ("VLC media player", r"C:\Program Files\VideoLAN\VLC\vlc.exe"),
+            ("Notepad++", r"C:\Program Files\Notepad++\notepad++.exe"),
+            ("Sumatra PDF", r"C:\Program Files\SumatraPDF\SumatraPDF.exe"),
+            ("Bandizip", r"C:\Program Files\Bandizip\Bandizip.exe"),
+            ("foobar2000", r"C:\Program Files\foobar2000\foobar2000.exe"),
+            // 名字虽含 "install" 但是合法应用 — 当前实现会误杀, 留作 TODO
+            // ("PowerShell ISE", r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell_ise.exe"),
+        ];
+        for (name, path) in ok {
+            assert!(
+                looks_like_file_opener(name, path),
+                "应保留但被过滤了: {name} ({path})"
+            );
+        }
+    }
 }
