@@ -1,6 +1,6 @@
 [package]
 name = "mingchuang"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2021"
 description = "整治国产流氓软件的 Windows 11 桌面治理工具"
 license = "MIT"

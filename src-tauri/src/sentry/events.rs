@@ -48,6 +48,7 @@ pub fn append_inspection(ev: &mingchuang_lib::inspection::ChangeEvent) -> Result
         kind: match ev.kind {
             mingchuang_lib::inspection::ChangeKind::Added => "added".into(),
             mingchuang_lib::inspection::ChangeKind::UserChoiceLost => "userchoice_lost".into(),
+            mingchuang_lib::inspection::ChangeKind::BaselineEstablished => "baseline_established".into(),
         },
         category: ev.category.clone(),
         label: ev.label.clone(),

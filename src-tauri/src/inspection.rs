@@ -50,6 +50,8 @@ pub enum ChangeKind {
     Added,
     /// UserChoice 期望和实际不一致 (默认打开方式被改回)
     UserChoiceLost,
+    /// 首次巡检, 把当前状态写成基准 (没有告警含义, 只是记录)
+    BaselineEstablished,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

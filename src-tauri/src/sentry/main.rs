@@ -378,13 +378,33 @@ fn run_full_inspection() -> Vec<mingchuang_lib::inspection::ChangeEvent> {
             return Vec::new();
         }
     };
-    let baseline = mingchuang_lib::inspection::load_baseline().unwrap_or_default();
-    let diff = mingchuang_lib::inspection::diff(&baseline, &curr);
-    // 把当前快照写回 baseline (这次的 curr = 下次的 baseline)
+    let result = match mingchuang_lib::inspection::load_baseline() {
+        None => {
+            // 首次巡检: 把当前状态当作基准, 不算 diff, 不告警。
+            // 否则用户开启巡检的瞬间会被自己电脑现有状态炸一脸 toast。
+            let summary = format!(
+                "已建立巡检基准: {} 项「此电脑」 / {} 项自启 / {} 项默认打开方式",
+                curr.pc_namespace.len(),
+                curr.autostart.len(),
+                curr.userchoice.len()
+            );
+            eprintln!("[sentry] {summary}");
+            let baseline_event = mingchuang_lib::inspection::ChangeEvent {
+                ts: chrono::Utc::now(),
+                kind: mingchuang_lib::inspection::ChangeKind::BaselineEstablished,
+                category: "baseline".into(),
+                label: summary,
+                detail: "首次跑定时巡检, 把当前电脑状态当作基准。下次比对只在新增项时告警, 而不是把已有项也当新增。".into(),
+            };
+            let _ = events::append_inspection(&baseline_event);
+            Vec::new()
+        }
+        Some(b) => mingchuang_lib::inspection::diff(&b, &curr),
+    };
     if let Err(e) = mingchuang_lib::inspection::save_baseline(&curr) {
         eprintln!("[sentry] 保存 inspection baseline 失败: {e:#}");
     }
-    diff
+    result
 }
 
 /// 偷改告警: 跟 baseline 比, 但不更新 baseline (只有定时巡检会更新)

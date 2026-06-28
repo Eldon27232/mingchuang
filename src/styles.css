@@ -459,6 +459,7 @@ code { font-family: Consolas, monospace; background: var(--panel2); padding: 2px
 }
 .insp-badge.userchoice { background: rgba(249,115,22,0.15); color: var(--accent2); }
 .insp-badge.autostart { background: rgba(245,158,11,0.15); color: var(--warn); }
+.insp-badge.baseline { background: rgba(16,185,129,0.15); color: var(--ok); }
 .insp-label { font-size: 12px; flex: 1; }
 
 /* ============ Updater Card ============ */
