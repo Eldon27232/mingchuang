@@ -18,7 +18,6 @@ path = "src/sentry/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
-embed-manifest = "1"
 
 [dependencies]
 tauri = { version = "2", features = [] }
