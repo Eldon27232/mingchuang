@@ -295,18 +295,38 @@ export function AiPanel() {
       )}
 
       <div className="ai-log" ref={logRef}>
-        {(session?.messages ?? []).map((m, i) => (
-          <MessageView
-            key={i} m={m} index={i}
-            onEdit={startEdit}
-            onRetry={i === lastAssistantIdx && !isRunning && !isWaiting ? retry : undefined}
-            editing={editingIndex === i}
-            editingText={editingText}
-            setEditingText={setEditingText}
-            onSubmitEdit={submitEdit}
-            onCancelEdit={cancelEdit}
-          />
-        ))}
+        {buildRenderItems(session?.messages ?? []).map((item) => {
+          if (item.kind === "user") {
+            return (
+              <MessageView
+                key={item.idx} m={item.msg} index={item.idx}
+                onEdit={startEdit}
+                onRetry={undefined}
+                editing={editingIndex === item.idx}
+                editingText={editingText}
+                setEditingText={setEditingText}
+                onSubmitEdit={submitEdit}
+                onCancelEdit={cancelEdit}
+              />
+            );
+          }
+          if (item.kind === "assistant_with_text") {
+            return (
+              <MessageView
+                key={item.idx} m={item.msg} index={item.idx}
+                onEdit={startEdit}
+                onRetry={item.idx === lastAssistantIdx && !isRunning && !isWaiting ? retry : undefined}
+                editing={false}
+                editingText=""
+                setEditingText={() => {}}
+                onSubmitEdit={() => {}}
+                onCancelEdit={() => {}}
+              />
+            );
+          }
+          // tools_only: 把跨多条 assistant 消息的纯 tool_calls 合并成一个 AI 卡
+          return <ToolsOnlyCard key={item.idx} calls={item.calls} />;
+        })}
         {session?.last_error && <div className="ai-msg err">⚠ {session.last_error}</div>}
         {isRunning && (
           <div className="ai-msg assistant thinking">
@@ -334,6 +354,55 @@ export function AiPanel() {
           <button onClick={send} disabled={!input.trim() || !config?.api_key}>发送</button>
         )}
       </div>
+    </div>
+  );
+}
+
+// 把消息列表预处理成渲染单元:
+// - user → user 卡
+// - assistant 有 text (无论有没有 tool_calls) → assistant_with_text, 独立成卡, 不参与合并
+// - assistant 纯 tool_calls (无 text) → tools_only, **跟前一条 tools_only 合并 tool_calls**
+//   这样 AI 连续调 N 次工具中间没说话, 视觉上只见到一个 "调用了 N 次工具" 折叠块
+type RenderItem =
+  | { kind: "user"; msg: ChatMessage; idx: number }
+  | { kind: "assistant_with_text"; msg: ChatMessage; idx: number }
+  | { kind: "tools_only"; calls: ToolCallView[]; idx: number };
+
+function buildRenderItems(msgs: ChatMessage[]): RenderItem[] {
+  const out: RenderItem[] = [];
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
+    if (m.role === "tool") continue;
+    if (m.role === "user") {
+      out.push({ kind: "user", msg: m, idx: i });
+      continue;
+    }
+    if (m.role !== "assistant") continue;
+    const hasText = !!m.content?.trim();
+    const calls = m.tool_calls ?? [];
+    if (hasText) {
+      out.push({ kind: "assistant_with_text", msg: m, idx: i });
+    } else if (calls.length > 0) {
+      const last = out[out.length - 1];
+      if (last && last.kind === "tools_only") {
+        last.calls.push(...calls);
+      } else {
+        out.push({ kind: "tools_only", calls: [...calls], idx: i });
+      }
+    }
+    // 空消息 (无 text 无 tool_calls) 忽略
+  }
+  return out;
+}
+
+function ToolsOnlyCard({ calls }: { calls: ToolCallView[] }) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggle = (id: string) =>
+    setExpanded((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  return (
+    <div className="ai-msg assistant">
+      <div className="ai-msg-role">AI</div>
+      <ToolCallList calls={calls} expanded={expanded} onToggle={toggle} />
     </div>
   );
 }
