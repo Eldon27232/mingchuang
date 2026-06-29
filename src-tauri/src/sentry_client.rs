@@ -103,6 +103,9 @@ pub struct WhitelistEntry {
 const RUNNING_THRESHOLD_SECS: i64 = 10; // state 在 10s 内更新过 = 运行中
 
 pub fn get_status() -> SentryStatus {
+    // 顺手自愈 Run 键路径漂移 (升级/卸载后老路径失效的情况)
+    let _ = repair_autostart_path();
+
     let exe = sentry_exe_path();
     let installed = exe.is_some();
     let autostart_enabled = is_autostart_registered();
@@ -303,6 +306,42 @@ fn is_autostart_registered() -> bool {
     CURRENT_USER.open(RUN_KEY)
         .and_then(|k| k.get_string(VALUE_NAME))
         .is_ok()
+}
+
+/// 自愈: Run 键里存的 sentry 路径若指向不存在的 exe (升级/卸载后挪位置了),
+/// 用当前 sentry exe 路径覆盖。
+/// 用户反馈: 开机自启列表里有明窗但实际没启动 — 多半就是这个。
+/// 返回是否做了修复 (写新值)。
+fn repair_autostart_path() -> bool {
+    use windows_registry::CURRENT_USER;
+    let Ok(key) = CURRENT_USER.open(RUN_KEY) else { return false; };
+    let Ok(existing) = key.get_string(VALUE_NAME) else { return false; };
+    let Some(current_exe) = sentry_exe_path() else { return false; };
+    let expected = format!("\"{}\" --autostart", current_exe.display());
+    if existing == expected {
+        return false;
+    }
+    // 检查 existing 里嵌的 exe 路径是不是还存在
+    let still_valid = parse_quoted_exe(&existing)
+        .map(|p| std::path::Path::new(&p).is_file())
+        .unwrap_or(false);
+    if still_valid {
+        // 老路径还有效 (比如用户有多个安装), 不动 — 用户自己点 enable_autostart 才重写
+        return false;
+    }
+    // 老路径失效 → 静默重写到当前 sentry exe
+    let Ok(key_w) = CURRENT_USER.create(RUN_KEY) else { return false; };
+    let _ = key_w.set_string(VALUE_NAME, &expected);
+    eprintln!("[autostart-repair] Run 键路径已修正: {existing} → {expected}");
+    true
+}
+
+/// 从 `"C:\path\app.exe" --autostart` 这种 Run 键值里抠出引号内的 exe 路径
+fn parse_quoted_exe(s: &str) -> Option<String> {
+    let s = s.trim();
+    if !s.starts_with('"') { return None; }
+    let end = s[1..].find('"')?;
+    Some(s[1..1 + end].to_string())
 }
 
 pub fn enable_autostart() -> Result<()> {
