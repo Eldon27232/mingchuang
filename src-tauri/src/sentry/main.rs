@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 const SAMPLE_INTERVAL: Duration = Duration::from_secs(2);
 const ALERT_THRESHOLD_BPS: u64 = 8 * 1024 * 1024; // 8 Mbps
+const MAX_REASONABLE_UPLOAD_BPS: u64 = 100 * 1000 * 1000 * 1000; // 100 Gbps
 const ALERT_WINDOW: Duration = Duration::from_secs(15);
 const ALERT_COOLDOWN: Duration = Duration::from_secs(15 * 60); // 同进程 15 分钟最多一条
 
@@ -286,8 +287,35 @@ fn compute_avg_bps(history: &[(Instant, u64)]) -> u64 {
     if dt < 0.1 {
         return 0;
     }
-    let bytes = b1.saturating_sub(*b0);
-    ((bytes as f64 * 8.0) / dt) as u64
+    let Some(bytes) = b1.checked_sub(*b0) else {
+        return 0;
+    };
+    let rate = (bytes as f64 * 8.0) / dt;
+    if !rate.is_finite() || rate <= 0.0 || rate > MAX_REASONABLE_UPLOAD_BPS as f64 {
+        return 0;
+    }
+    rate as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn computes_average_upload_rate_for_normal_counter_delta() {
+        let start = Instant::now();
+        let history = vec![(start, 1_000), (start + Duration::from_secs(2), 5_001_000)];
+
+        assert_eq!(compute_avg_bps(&history), 20_000_000);
+    }
+
+    #[test]
+    fn rejects_impossible_counter_spikes() {
+        let start = Instant::now();
+        let history = vec![(start, 0), (start + Duration::from_secs(2), u64::MAX / 16)];
+
+        assert_eq!(compute_avg_bps(&history), 0);
+    }
 }
 
 fn trigger_alert(state: &ProcessUploadState, rate_bps: u64) {
