@@ -52,7 +52,7 @@
       "endpoints": [
         "https://github.com/Eldon27232/mingchuang/releases/latest/download/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhFN0U1RTE5RDk0RDg2MkEKUldRcWhrM1pHVjUranVFMllpdHh4UmpPRkVaZzEvMkpzQlhndzVXbEdWeWtGQlNJd2ZGYURGSWYK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc3QTc5NkJGODM1OThCMApSV1N3bURYNGEzbDZCNlV6d3g1S1hZZ3FFRDNQN3QyVGVLTng4SlJicEREMlFJWXNCZkM2NXJBLwo=",
       "windows": {
         "installMode": "passive"
       }
