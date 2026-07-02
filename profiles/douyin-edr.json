@@ -1,0 +1,85 @@
+{
+  "id": "douyin-edr",
+  "name": "抖音安全组件 (edrAgent)",
+  "vendor": "Douyin Vision Co., Ltd.(抖音) / 卸载项登记名 feige security",
+  "category": "other",
+  "severity": "high",
+  "tested_on": {
+    "windows": "Windows 11 Pro for Workstations 10.0.26200",
+    "date": "2026-07-02",
+    "version": "5.3.1.359",
+    "verified_by": "Get-AuthenticodeSignature + sc qc Edrservice + Uninstall 注册表项实测"
+  },
+  "fingerprints": {
+    "code_sign_subjects": [
+      "Douyin Vision Co., Ltd."
+    ],
+    "install_paths": [
+      "%PROGRAMFILES(X86)%\\edrAgent"
+    ],
+    "install_path_keywords": [
+      "\\edrAgent\\"
+    ],
+    "process_names": [
+      "edrservice.exe",
+      "filequarant.exe",
+      "parfait_crash_handler.exe"
+    ],
+    "service_names": [
+      "Edrservice"
+    ],
+    "registry_keys": [
+      "HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{AB389DF2-9CD1-4EF8-9377-CD56DAE86979}}_is1"
+    ]
+  },
+  "actions": [
+    {
+      "kind": "service-stop",
+      "target": "Edrservice",
+      "reason": "停止抖音 EDR 主服务 (LocalSystem 常驻),先停运行态再禁用",
+      "elevate": true,
+      "rollback": null
+    },
+    {
+      "kind": "service-disable",
+      "target": "Edrservice",
+      "reason": "服务启动类型改为 Disabled,阻断开机自启复活 (原 Auto,已快照可还原)",
+      "elevate": true,
+      "rollback": null
+    },
+    {
+      "kind": "process-kill",
+      "target": "edrservice.exe",
+      "reason": "杀掉残留的 EDR 主服务进程",
+      "elevate": true,
+      "rollback": null
+    },
+    {
+      "kind": "process-kill",
+      "target": "filequarant.exe",
+      "reason": "杀掉文件隔离/查杀组件进程",
+      "elevate": true,
+      "rollback": null
+    },
+    {
+      "kind": "process-kill",
+      "target": "parfait_crash_handler.exe",
+      "reason": "杀掉 parfait 崩溃/APM 上报常驻进程",
+      "elevate": true,
+      "rollback": null
+    }
+  ],
+  "verify": [
+    {
+      "kind": "service-state",
+      "target": "Edrservice",
+      "description": "服务应为 Stopped 且启动类型 Disabled"
+    },
+    {
+      "kind": "process-not-running",
+      "target": "edrservice.exe",
+      "description": "EDR 主进程已退出"
+    }
+  ],
+  "notes": "身份: 代码签名主体 CN=\"Douyin Vision Co., Ltd.\"(EV, 北京石景山区, 营业执照号 91110107599635562F), edrservice.exe 证书序列号 053649166D305E090BB6CFCC6CA440DA。注意伪装: 卸载项 Publisher 登记为 \"feige security\", DisplayName=\"抖音安全组件 版本 5.3.1.359\", 靠 code_sign_subjects 才能稳定识别。构成: edrservice.exe(EDR主服务,7.9M) + filequarant.exe(文件隔离查杀) + parfait_*(崩溃/APM上报) + sscronet.dll(字节Cronet网络栈,8.9M) + gp.dll/secsdk.dll(安全SDK), 数据落在 seraph_storage\\ (seraph.data.* / ttnet 字节网络库 / xlog 日志)。复活机制: Windows 服务 Edrservice(AUTO_START, LocalSystem), 无 Run 键/计划任务, 故禁用服务即可断根。常见随抖音直播伴侣/剪映/抖音系客户端或企业员工机捆绑安装。本画像按用户要求只禁用不删除文件(无 file-delete/reg-delete 动作), 保留 unins000.exe 官方卸载入口。severity=high 因 LocalSystem 权限 + 常驻上报 + 自带网络栈 + 文件隔离能力, 但非病毒(合法商业 EDR), 未达 critical。"
+}
