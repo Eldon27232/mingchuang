@@ -199,7 +199,7 @@ fn main() {
         let now = Instant::now();
         match network::sample_per_pid_bytes_out() {
             Ok(snapshot) => {
-                for (pid, total_bytes) in snapshot {
+                for (&pid, &total_bytes) in &snapshot {
                     let state = states.entry(pid).or_insert_with(|| ProcessUploadState {
                         pid,
                         image_name: process_filter::image_name_for(pid).unwrap_or_default(),
@@ -211,6 +211,21 @@ fn main() {
                     state
                         .sample_history
                         .retain(|(t, _)| now.duration_since(*t) <= Duration::from_secs(30));
+                }
+
+                // 快照里没有的 pid (公网连接全关/采样失败但进程还活着): 补一个零增量样本。
+                // 否则 sample_history 冻结, compute_avg_bps 用的又是历史内部时间戳,
+                // 会永远算出同一个旧速率 — 每过一次冷却就重发一条数值完全相同的告警。
+                for state in states.values_mut() {
+                    if snapshot.contains_key(&state.pid) {
+                        continue;
+                    }
+                    if let Some(&(_, last_bytes)) = state.sample_history.last() {
+                        state.sample_history.push((now, last_bytes));
+                        state
+                            .sample_history
+                            .retain(|(t, _)| now.duration_since(*t) <= Duration::from_secs(30));
+                    }
                 }
 
                 let wl = whitelist::load_merged();
