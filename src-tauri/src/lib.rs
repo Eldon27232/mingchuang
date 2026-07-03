@@ -1,5 +1,6 @@
 mod action;
 mod ai;
+pub mod certwatch;
 mod commands;
 mod elevation;
 mod fileassoc;
@@ -72,6 +73,10 @@ pub fn run() {
             commands::sentry_run_inspection_now,
             commands::sentry_reset_inspection_baseline,
             commands::sentry_list_inspection_events,
+            commands::sentry_get_certwatch_config,
+            commands::sentry_set_certwatch_config,
+            commands::sentry_run_cert_check_now,
+            commands::sentry_reset_ca_baseline,
         ])
         .run(tauri::generate_context!())
         .expect("error while running mingchuang");

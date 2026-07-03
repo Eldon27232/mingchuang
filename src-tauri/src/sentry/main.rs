@@ -26,6 +26,11 @@ const ALERT_COOLDOWN: Duration = Duration::from_secs(15 * 60); // 同进程 15 �
 // 偷改告警轮询间隔 — 60s 是工程上的折中, 实时性够, 不至于撑 CPU
 const TAMPER_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
+// CA 证书库扫描间隔 — 60s 快查, 只读注册表/证书库, 很轻
+const CA_CHECK_INTERVAL: Duration = Duration::from_secs(60);
+// Claude 链路检查间隔 — 5 分钟, 每次要发真实网络连接, 不宜太频繁
+const CLAUDE_TLS_CHECK_INTERVAL: Duration = Duration::from_secs(300);
+
 #[derive(Debug, Clone)]
 struct ProcessUploadState {
     pid: u32,
@@ -53,6 +58,8 @@ fn main() {
     let mut last_tamper_check_at: Option<chrono::DateTime<chrono::Utc>> = None;
     let mut last_inspection_findings: u32 = 0;
     let mut last_tamper_at_instant: Option<Instant> = None;
+    let mut last_ca_check_instant: Option<Instant> = None;
+    let mut last_claude_check_instant: Option<Instant> = None;
 
     let args: Vec<String> = std::env::args().collect();
 
@@ -194,6 +201,51 @@ fn main() {
                 c.run_inspection_now = false;
                 let _ = state_io::write_control(&c);
             }
+        }
+
+        // ============ CA 证书监控 ============
+        let ca_due = control.ca_watch_enabled
+            && (control.run_cert_check_now
+                || last_ca_check_instant
+                    .map(|t| Instant::now().duration_since(t) >= CA_CHECK_INTERVAL)
+                    .unwrap_or(true));
+        if ca_due {
+            let findings = mingchuang_lib::certwatch::scan_ca_and_diff();
+            last_ca_check_instant = Some(Instant::now());
+            for ev in &findings {
+                fire_inspection_toast("🔐 CA 证书告警", ev);
+                let _ = events::append_inspection(ev);
+            }
+            if !findings.is_empty() {
+                alerts_total += findings.len() as u64;
+                last_alert_at = Some(chrono::Utc::now());
+            }
+        }
+
+        // ============ Claude 链路 MITM 检测 ============
+        let claude_due = control.claude_tls_watch_enabled
+            && (control.run_cert_check_now
+                || last_claude_check_instant
+                    .map(|t| Instant::now().duration_since(t) >= CLAUDE_TLS_CHECK_INTERVAL)
+                    .unwrap_or(true));
+        if claude_due {
+            let findings = mingchuang_lib::certwatch::check_claude_tls();
+            last_claude_check_instant = Some(Instant::now());
+            for ev in &findings {
+                fire_inspection_toast("🕵 Claude 链路告警", ev);
+                let _ = events::append_inspection(ev);
+            }
+            if !findings.is_empty() {
+                alerts_total += findings.len() as u64;
+                last_alert_at = Some(chrono::Utc::now());
+            }
+        }
+
+        // 清掉证书检查的一次性请求位 (重读磁盘避免覆盖本轮其它已清标志)
+        if control.run_cert_check_now {
+            let mut c = state_io::read_control();
+            c.run_cert_check_now = false;
+            let _ = state_io::write_control(&c);
         }
 
         let now = Instant::now();

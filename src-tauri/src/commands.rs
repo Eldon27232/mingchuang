@@ -1,5 +1,5 @@
 use crate::action::{self, ActionPlan, ExecResult};
-use crate::sentry_client::{self, AlertEvent, InspectionConfig, InspectionEvent, SentryStatus, WhitelistFile};
+use crate::sentry_client::{self, AlertEvent, CertWatchConfig, InspectionConfig, InspectionEvent, SentryStatus, WhitelistFile};
 use crate::ai::agent::{self, ApprovalDecision, Session};
 use crate::ai::config::{self as ai_config, AiConfig};
 use crate::elevation::{self, ElevationStatus};
@@ -233,6 +233,28 @@ pub fn sentry_reset_inspection_baseline() -> Result<(), String> {
 #[tauri::command]
 pub fn sentry_list_inspection_events(limit: usize) -> Vec<InspectionEvent> {
     sentry_client::list_recent_inspection_events(limit.max(1).min(500))
+}
+
+// ============ 证书链监控 ============
+
+#[tauri::command]
+pub fn sentry_get_certwatch_config() -> CertWatchConfig {
+    sentry_client::get_certwatch_config()
+}
+
+#[tauri::command]
+pub fn sentry_set_certwatch_config(config: CertWatchConfig) -> Result<(), String> {
+    sentry_client::set_certwatch_config(config).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn sentry_run_cert_check_now() -> Result<(), String> {
+    sentry_client::request_cert_check_now().map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+pub fn sentry_reset_ca_baseline() -> Result<(), String> {
+    sentry_client::reset_ca_baseline().map_err(|e| format!("{e:#}"))
 }
 
 // ============ AI ============

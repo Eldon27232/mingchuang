@@ -45,6 +45,10 @@ interface InspectionEvent {
   label: string;
   detail: string;
 }
+interface CertWatchConfig {
+  ca_watch_enabled: boolean;
+  claude_tls_watch_enabled: boolean;
+}
 
 export function SentryPanel() {
   const [status, setStatus] = useState<SentryStatus | null>(null);
@@ -52,23 +56,26 @@ export function SentryPanel() {
   const [whitelist, setWhitelist] = useState<WhitelistFile | null>(null);
   const [inspCfg, setInspCfg] = useState<InspectionConfig | null>(null);
   const [inspEvents, setInspEvents] = useState<InspectionEvent[]>([]);
+  const [certCfg, setCertCfg] = useState<CertWatchConfig | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [newEntry, setNewEntry] = useState({ image_name: "", reason: "" });
 
   const refresh = async () => {
     try {
-      const [s, e, w, ic, ie] = await Promise.all([
+      const [s, e, w, ic, ie, cc] = await Promise.all([
         invoke<SentryStatus>("sentry_get_status"),
         invoke<AlertEvent[]>("sentry_list_events", { limit: 50 }),
         invoke<WhitelistFile>("sentry_get_whitelist"),
         invoke<InspectionConfig>("sentry_get_inspection_config"),
         invoke<InspectionEvent[]>("sentry_list_inspection_events", { limit: 30 }),
+        invoke<CertWatchConfig>("sentry_get_certwatch_config"),
       ]);
       setStatus(s);
       setEvents(e);
       setWhitelist(w);
       setInspCfg(ic);
       setInspEvents(ie);
+      setCertCfg(cc);
     } catch (err) {
       console.error("sentry refresh failed", err);
     }
@@ -118,6 +125,28 @@ export function SentryPanel() {
       await invoke("sentry_reset_inspection_baseline");
       await invoke("sentry_run_inspection_now");
     });
+  };
+
+  const toggleCaWatch = async () => {
+    if (!certCfg) return;
+    await wrap("toggle_ca", async () => {
+      await invoke("sentry_set_certwatch_config", {
+        config: { ...certCfg, ca_watch_enabled: !certCfg.ca_watch_enabled },
+      });
+    });
+  };
+  const toggleClaudeTls = async () => {
+    if (!certCfg) return;
+    await wrap("toggle_claude", async () => {
+      await invoke("sentry_set_certwatch_config", {
+        config: { ...certCfg, claude_tls_watch_enabled: !certCfg.claude_tls_watch_enabled },
+      });
+    });
+  };
+  const runCertCheckNow = () => wrap("cert_now", async () => { await invoke("sentry_run_cert_check_now"); });
+  const resetCaBaseline = async () => {
+    if (!confirm("清掉根证书基准? 下次检查会把当前所有受信任根证书当干净基准, 已有的不再告警。")) return;
+    await wrap("reset_ca", async () => { await invoke("sentry_reset_ca_baseline"); });
   };
 
   const enableAutostart = () => wrap("enable", async () => { await invoke("sentry_enable_autostart"); });
@@ -309,6 +338,60 @@ export function SentryPanel() {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* 证书链监控 */}
+      {certCfg && (
+        <div className="inspection-section">
+          <h3 className="section-h">证书链监控</h3>
+          <p className="muted small">
+            两个独立开关, 默认都关。守护进程在跑时才生效。防的是「有人给你装流氓根证书,
+            解密你的 HTTPS / Claude 通信」。发现的问题会记在上面的巡检事件列表里, 并弹通知。
+          </p>
+
+          <div className="inspection-toggles">
+            <label className="insp-toggle">
+              <input
+                type="checkbox"
+                checked={certCfg.ca_watch_enabled}
+                disabled={busy === "toggle_ca"}
+                onChange={toggleCaWatch}
+              />
+              <div className="insp-toggle-text">
+                <strong>CA 证书安装监控</strong>
+                <span className="muted small">
+                  每 60 秒扫一次受信任根证书库(机器 / 用户 / 组策略), 冒出新根证书立刻告警。
+                  第一次开启会先建基准, 不会拿现有证书炸你。
+                </span>
+              </div>
+            </label>
+
+            <label className="insp-toggle">
+              <input
+                type="checkbox"
+                checked={certCfg.claude_tls_watch_enabled}
+                disabled={busy === "toggle_claude"}
+                onChange={toggleClaudeTls}
+              />
+              <div className="insp-toggle-text">
+                <strong>Claude 链路 MITM 检测</strong>
+                <span className="muted small">
+                  每 5 分钟直连 api.anthropic.com / claude.ai, 抓真实证书链, 用内置公共根
+                  独立校验(和系统证书库无关)。若证书不是公共 CA 签发(被中间人拦截)就告警, 并点名拦截方。
+                </span>
+              </div>
+            </label>
+
+            <div className="insp-interval">
+              <button onClick={runCertCheckNow} disabled={busy === "cert_now"} className="seg-btn">
+                {busy === "cert_now" ? "..." : "立即检查一次"}
+              </button>
+              <button onClick={resetCaBaseline} disabled={busy === "reset_ca"} className="seg-btn" title="把当前所有受信任根证书当干净基准, 已有的不再告警">
+                {busy === "reset_ca" ? "..." : "重置根证书基准"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

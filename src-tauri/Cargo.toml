@@ -39,6 +39,7 @@ windows = { version = "0.59", features = [
     "Win32_Security_Authorization",
     "Win32_System_Memory",
     "Win32_System_Registry",
+    "Win32_Security_Cryptography",
     "Win32_System_Threading",
     "Win32_System_Com",
     "Win32_System_LibraryLoader",
@@ -60,6 +61,9 @@ notify-rust = "4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio = { version = "1", features = ["sync", "macros"] }
 include_dir = "0.7"
+# Claude 链路证书监控: 直连抓取对端证书链, 用公共根独立校验 (与系统证书库无关)
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
 
 [profile.release]
 opt-level = "z"

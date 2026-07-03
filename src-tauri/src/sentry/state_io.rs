@@ -49,6 +49,17 @@ pub struct ControlFile {
     /// GUI 写入: 请求立即跑一次巡检, 守护进程消化后会清回 false
     #[serde(default)]
     pub run_inspection_now: bool,
+
+    // ============ 证书链监控 (默认全关) ============
+    /// CA 证书监控: 周期扫受信任根证书库, 新增根证书告警
+    #[serde(default)]
+    pub ca_watch_enabled: bool,
+    /// Claude 链路监控: 周期直连 Anthropic 端点抓证书链, 被中间人拦截告警
+    #[serde(default)]
+    pub claude_tls_watch_enabled: bool,
+    /// GUI 写入: 请求立即跑一次证书检查 (CA + Claude 链路), 守护进程消化后清回 false
+    #[serde(default)]
+    pub run_cert_check_now: bool,
 }
 
 fn default_inspection_interval() -> u32 {

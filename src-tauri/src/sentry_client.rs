@@ -44,6 +44,12 @@ pub struct ControlFile {
     pub inspection_interval_minutes: u32,
     #[serde(default)]
     pub run_inspection_now: bool,
+    #[serde(default)]
+    pub ca_watch_enabled: bool,
+    #[serde(default)]
+    pub claude_tls_watch_enabled: bool,
+    #[serde(default)]
+    pub run_cert_check_now: bool,
 }
 
 fn default_inspection_interval() -> u32 { 60 }
@@ -53,6 +59,12 @@ pub struct InspectionConfig {
     pub inspection_enabled: bool,
     pub tamper_alert_enabled: bool,
     pub inspection_interval_minutes: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CertWatchConfig {
+    pub ca_watch_enabled: bool,
+    pub claude_tls_watch_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -251,6 +263,33 @@ pub fn request_inspection_now() -> Result<()> {
 
 pub fn reset_inspection_baseline() -> Result<()> {
     crate::inspection::reset_baseline()
+}
+
+// ============ 证书链监控 ============
+
+pub fn get_certwatch_config() -> CertWatchConfig {
+    let c = read_control();
+    CertWatchConfig {
+        ca_watch_enabled: c.ca_watch_enabled,
+        claude_tls_watch_enabled: c.claude_tls_watch_enabled,
+    }
+}
+
+pub fn set_certwatch_config(cfg: CertWatchConfig) -> Result<()> {
+    let mut c = read_control();
+    c.ca_watch_enabled = cfg.ca_watch_enabled;
+    c.claude_tls_watch_enabled = cfg.claude_tls_watch_enabled;
+    write_control(&c)
+}
+
+pub fn request_cert_check_now() -> Result<()> {
+    let mut c = read_control();
+    c.run_cert_check_now = true;
+    write_control(&c)
+}
+
+pub fn reset_ca_baseline() -> Result<()> {
+    crate::certwatch::reset_ca_baseline()
 }
 
 pub fn list_recent_inspection_events(limit: usize) -> Vec<InspectionEvent> {
